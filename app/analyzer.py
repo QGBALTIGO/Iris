@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import asyncio
+from urllib.parse import urlsplit
+
 import httpx
 
+from app.content import annotate_content_roles
 from app.dedup import deduplicate
 from app.extractors.browser import probe_browser
 from app.extractors.dash import inspect_mpd
@@ -31,11 +35,11 @@ class Analyzer:
             page = await self.fetcher.fetch(url)
         except httpx.HTTPStatusError as exc:
             blocked_status = exc.response.status_code
-            warnings.append(f"HTTP inicial retornou {blocked_status}; tentando navegador/extratores alternativos.")
+            warnings.append(f"HTTP {blocked_status} na análise direta; usando navegador/extrator quando possível.")
         except Exception as exc:
             if not deep:
                 raise
-            warnings.append(f"HTTP inicial falhou: {type(exc).__name__}")
+            warnings.append(f"Falha na análise HTTP: {type(exc).__name__}")
 
         if page is not None:
             final_url = page.url
@@ -60,28 +64,27 @@ class Analyzer:
         await self._inspect_manifests(resources, warnings)
 
         browser_fallback = blocked_status in {401, 403, 429}
-        if self.config.browser_enabled and (deep or browser_fallback):
+        if deep:
+            await self._deep_probe(final_url, resources, warnings)
+        elif self.config.browser_enabled and browser_fallback:
             try:
-                browser_resources = await probe_browser(
-                    final_url,
-                    max_requests=self.config.max_browser_requests,
-                    timeout_ms=18_000 if deep else 12_000,
-                    interaction_rounds=48 if deep else 2,
+                resources.extend(
+                    await probe_browser(
+                        final_url,
+                        max_requests=self.config.max_browser_requests,
+                        timeout_ms=12_000,
+                        interaction_rounds=2,
+                    )
                 )
-                resources.extend(browser_resources)
-                if browser_fallback and browser_resources:
-                    warnings.append("A página bloqueou HTTP simples, mas o navegador conseguiu observar recursos.")
             except Exception as exc:
-                warnings.append(f"Browser profundo indisponível: {type(exc).__name__}")
-
-        if deep and self.config.ytdlp_enabled:
-            ytdlp_resources = await probe_ytdlp(final_url)
-            resources.extend(ytdlp_resources)
-            if any(item.drm for item in ytdlp_resources):
-                warnings.append("O extrator identificou mídia protegida por DRM; o Iris apenas sinaliza e não tenta contornar a proteção.")
+                warnings.append(f"Navegador indisponível: {type(exc).__name__}")
 
         resources = [r for r in deduplicate(resources) if not r.metadata.get("navigation_only")]
+        annotate_content_roles(resources)
         await self._inspect_manifests(resources, warnings)
+
+        if any(item.drm for item in resources):
+            warnings.append("Mídia protegida por DRM detectada; o Iris informa a proteção, mas não tenta contorná-la.")
 
         return AnalyzeResult(
             url=str(url),
@@ -89,8 +92,38 @@ class Analyzer:
             title=title,
             content_type=content_type,
             resources=resources,
-            warnings=warnings,
+            warnings=list(dict.fromkeys(warnings)),
         )
+
+    async def _deep_probe(self, final_url: str, resources: list[MediaResource], warnings: list[str]) -> None:
+        tasks: list[tuple[str, asyncio.Task]] = []
+        host = urlsplit(final_url).netloc.lower()
+        rounds = 64 if "mangaplus.shueisha.co.jp" in host else 18
+
+        if self.config.browser_enabled:
+            tasks.append((
+                "browser",
+                asyncio.create_task(
+                    probe_browser(
+                        final_url,
+                        max_requests=self.config.max_browser_requests,
+                        timeout_ms=18_000,
+                        interaction_rounds=rounds,
+                    )
+                ),
+            ))
+        if self.config.ytdlp_enabled:
+            tasks.append(("yt-dlp", asyncio.create_task(probe_ytdlp(final_url))))
+
+        if not tasks:
+            return
+
+        results = await asyncio.gather(*(task for _, task in tasks), return_exceptions=True)
+        for (name, _), result in zip(tasks, results):
+            if isinstance(result, Exception):
+                warnings.append(f"{name} falhou: {type(result).__name__}")
+                continue
+            resources.extend(result)
 
     async def _inspect_manifests(self, resources: list[MediaResource], warnings: list[str]) -> None:
         candidates = [r for r in resources if r.type == ResourceType.PLAYLIST][: self.config.max_manifest_probes]
@@ -117,7 +150,7 @@ class Analyzer:
                 resource.variants = variants
                 resource.drm = drm
             if resource.drm:
-                warnings.append(f"Mídia protegida por DRM detectada: {resource.url}")
+                warnings.append("Uma playlist protegida por DRM foi detectada.")
 
 
 def _charset(content_type: str) -> str:
