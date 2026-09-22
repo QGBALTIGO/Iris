@@ -42,7 +42,7 @@ class Settings:
     downloads_dir: Path = Path(os.getenv("IRIS_DOWNLOADS_DIR", "downloads"))
     bot_upload_limit_bytes: int = int(os.getenv("IRIS_BOT_UPLOAD_LIMIT_BYTES", str(45 * 1024 * 1024)))
     cleanup_after_delivery: bool = _bool("IRIS_CLEANUP_AFTER_DELIVERY", True)
-    notify_startup: bool = _bool("IRIS_NOTIFY_STARTUP", False)
+    notify_startup: bool = _bool("IRIS_NOTIFY_STARTUP", False)\n    run_benchmark: bool = _bool("IRIS_RUN_BENCHMARK", False)
 
 
 settings = Settings()
