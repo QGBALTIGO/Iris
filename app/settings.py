@@ -26,7 +26,8 @@ class Settings:
     telegram_api_hash: str | None = os.getenv("IRIS_TELEGRAM_API_HASH")
     telegram_phone: str | None = os.getenv("IRIS_TELEGRAM_PHONE")
     telegram_session_path: str = os.getenv("IRIS_TELEGRAM_SESSION_PATH", "/data/account06")
-    userbot_threshold_bytes: int = int(os.getenv("IRIS_USERBOT_THRESHOLD_BYTES", str(20 * 1024 * 1024)))\n    auto_userbot_login: bool = _bool("IRIS_AUTO_USERBOT_LOGIN", False)
+    userbot_threshold_bytes: int = int(os.getenv("IRIS_USERBOT_THRESHOLD_BYTES", str(20 * 1024 * 1024)))
+    auto_userbot_login: bool = _bool("IRIS_AUTO_USERBOT_LOGIN", False)
 
     public_enabled: bool = _bool("IRIS_PUBLIC_ENABLED", False)
     browser_enabled: bool = _bool("IRIS_BROWSER_ENABLED", True)
