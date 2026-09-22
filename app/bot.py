@@ -380,7 +380,11 @@ async def run_bot() -> None:
     async def admin_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not _is_admin(update.effective_user.id if update.effective_user else None):
             return
-        action = (context.args[0].lower() if context.args else "status")
+        command = (update.effective_message.text or "").split()[0].split("@", 1)[0].lower()
+        if command == "/retomar" and not context.args:
+            action = "continuar"
+        else:
+            action = (context.args[0].lower() if context.args else "status")
         message = update.effective_message
         chat_id = update.effective_chat.id
 
