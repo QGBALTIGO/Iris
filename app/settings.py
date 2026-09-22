@@ -49,6 +49,8 @@ class Settings:
     run_source_speed_smoke: bool = _bool("IRIS_RUN_SOURCE_SPEED_SMOKE", False)
     run_mtproto_speed_smoke: bool = _bool("IRIS_RUN_MTPROTO_SPEED_SMOKE", False)
     site_queue_auto_start: bool = _bool("IRIS_SITE_QUEUE_AUTO_START", False)
+    one_shot_url: str | None = os.getenv("IRIS_ONE_SHOT_URL")
+    one_shot_nonce: str | None = os.getenv("IRIS_ONE_SHOT_NONCE")
 
 
 settings = Settings()
