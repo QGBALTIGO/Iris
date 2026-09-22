@@ -146,6 +146,10 @@ class SiteQueueManager:
         now = time.time()
         added = 0
         with self._connect() as db:
+            db.execute(
+                "DELETE FROM queue_items WHERE site=? AND rtrim(url, '/')=rtrim(?, '/')",
+                (site, site),
+            )
             for post_id, url, title, published_at in rows:
                 cur = db.execute(
                     """
