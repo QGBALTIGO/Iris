@@ -15,6 +15,7 @@ from app.delivery import DeliveryManager, build_pdf, build_zip, human_bytes, par
 from app.jobs import JobStore
 from app.large_video_smoke import run_large_video_smoke
 from app.models import AnalyzeResult, DownloadJob, JobState, MediaResource, ResourceType
+from app.mtproto_speed_smoke import run_mtproto_speed_smoke
 from app.selftest import run_telegram_selftest
 from app.settings import settings
 from app.source_speed_smoke import run_source_speed_smoke
@@ -1036,6 +1037,17 @@ async def run_bot() -> None:
             except Exception as exc:
                 print(f"IRIS_SOURCE_SPEED_ERROR {type(exc).__name__}: {exc}", flush=True)
         asyncio.create_task(_source_speed_once(), name="iris-source-speed-smoke")
+
+    if settings.run_mtproto_speed_smoke:
+        async def _mtproto_speed_once():
+            await asyncio.sleep(4)
+            try:
+                rows = await run_mtproto_speed_smoke(application.bot)
+                for row in rows:
+                    print("IRIS_MTPROTO_SPEED " + row, flush=True)
+            except Exception as exc:
+                print(f"IRIS_MTPROTO_SPEED_ERROR {type(exc).__name__}: {exc}", flush=True)
+        asyncio.create_task(_mtproto_speed_once(), name="iris-mtproto-speed-smoke")
 
     try:
         await asyncio.Event().wait()
