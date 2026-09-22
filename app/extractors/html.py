@@ -83,8 +83,30 @@ def extract_html_resources(html: str, base_url: str) -> tuple[str | None, list[M
     for selector, forced_type in meta_selectors.items():
         for tag in soup.select(selector):
             url = _absolute(base_url, tag.get("content"))
-            if url:
-                resources.append(MediaResource(url=url, type=forced_type, source="html:meta"))
+            if not url:
+                continue
+            actual_type = classify_resource(url)
+            if forced_type == ResourceType.VIDEO and actual_type == ResourceType.OTHER:
+                resources.append(
+                    MediaResource(
+                        url=url,
+                        type=ResourceType.OTHER,
+                        source="html:meta",
+                        metadata={
+                            "navigation_only": True,
+                            "declared_type": "video",
+                            "embed_reference": True,
+                        },
+                    )
+                )
+            else:
+                resources.append(
+                    MediaResource(
+                        url=url,
+                        type=forced_type if actual_type == ResourceType.OTHER else actual_type,
+                        source="html:meta",
+                    )
+                )
 
     for script in soup.find_all("script", attrs={"type": "application/ld+json"}):
         raw = script.string or script.get_text(strip=True)
@@ -108,9 +130,13 @@ def extract_html_resources(html: str, base_url: str) -> tuple[str | None, list[M
         for match in _REL_MEDIA_RE.findall(text):
             _push(resources, base_url, match.replace("\\/", "/"), "html:script-relative")
 
-    # Iframes and generic links are useful context but should not pollute the media count.
+    # Iframes, embed references and generic links are useful context but should
+    # not pollute the downloadable media count.
     for item in resources:
-        if item.source in {"html:iframe", "html:a", "html:link"} and item.type == ResourceType.OTHER:
+        if (
+            item.source in {"html:iframe", "html:a", "html:link"}
+            or "jsonld:embedUrl" in item.source
+        ) and item.type == ResourceType.OTHER:
             item.metadata["navigation_only"] = True
 
     return title, resources
