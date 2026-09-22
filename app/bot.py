@@ -1136,12 +1136,28 @@ async def run_bot() -> None:
             )
 
     try:
-        resumed = await site_queue.maybe_resume(application.bot)
-        if resumed and settings.admin_id:
+        queue_state = site_queue.status()
+        if (
+            settings.site_queue_auto_start
+            and settings.admin_id
+            and not queue_state.get("last_started_at")
+        ):
+            stats = await site_queue.discover()
+            await site_queue.start(application.bot, settings.admin_id, discover=False)
             await application.bot.send_message(
                 settings.admin_id,
-                "♻️ <b>Fila retomada automaticamente</b>\n\nContinuando do ponto salvo antes do reinício.",
+                "▶️ <b>Teste do catálogo iniciado</b>\n\n"
+                f"🎞️ Itens registrados: <b>{stats['total']}</b>\n"
+                "Vou enviar um por um e salvar o progresso automaticamente.",
             )
+        else:
+            resumed = await site_queue.maybe_resume(application.bot)
+            if resumed and settings.admin_id:
+                await application.bot.send_message(
+                    settings.admin_id,
+                    "♻️ <b>Fila retomada automaticamente</b>\n\n"
+                    "Continuando do ponto salvo antes do reinício.",
+                )
     except Exception as exc:
         print(f"IRIS_QUEUE_RESUME_ERROR {type(exc).__name__}: {exc}", flush=True)
 
