@@ -101,6 +101,20 @@ def progress_text(job: DownloadJob, speed_bps: float | None = None) -> str:
     return "\n".join(lines)
 
 
+def upload_progress_text(name: str, sent: int, total: int, speed_bps: float = 0.0) -> str:
+    value = min(1.0, sent / total) if total else 0.0
+    filled = min(12, round(value * 12))
+    bar = "█" * filled + "░" * (12 - filled)
+    speed = f" • ⚡ {human_bytes(int(speed_bps))}/s" if speed_bps > 0 else ""
+    return "\n".join([
+        "⬆️ <b>Enviando para o Telegram</b>",
+        f"<code>{bar}</code>  <b>{value * 100:.0f}%</b>",
+        "",
+        f"💾 {human_bytes(sent)} / {human_bytes(total)}{speed}",
+        f"🎬 <i>{_safe(name, 52)}</i>",
+    ])
+
+
 def deliverable_paths(job: DownloadJob, limit_bytes: int) -> tuple[list[Path], list[Path]]:
     sendable: list[Path] = []
     oversized: list[Path] = []
@@ -628,28 +642,68 @@ async def run_bot() -> None:
 
                 if paths and job.state != JobState.CANCELLED:
                     try:
+                        async def upload_path_to_telegram(path: Path, *, as_video: bool, caption: str):
+                            total_size = path.stat().st_size
+                            upload_last_at = time.monotonic()
+                            upload_last_bytes = 0
+
+                            try:
+                                await message.edit_text(
+                                    upload_progress_text(path.name, 0, total_size, 0.0)
+                                )
+                            except Exception:
+                                pass
+
+                            async def on_upload(sent: int, total: int):
+                                nonlocal upload_last_at, upload_last_bytes
+                                now_upload = time.monotonic()
+                                if sent < total and now_upload - upload_last_at < 0.7:
+                                    return
+                                elapsed = max(now_upload - upload_last_at, 0.001)
+                                upload_speed = max(0.0, (sent - upload_last_bytes) / elapsed)
+                                upload_last_at = now_upload
+                                upload_last_bytes = sent
+                                try:
+                                    await message.edit_text(
+                                        upload_progress_text(
+                                            path.name,
+                                            sent,
+                                            total or total_size,
+                                            upload_speed,
+                                        )
+                                    )
+                                except Exception:
+                                    pass
+
+                            return await delivery.send_path(
+                                message,
+                                path,
+                                as_video=as_video,
+                                caption=caption,
+                                progress_callback=on_upload,
+                            )
+
                         if bundle_mode == "pdf":
                             out = settings.downloads_dir / f"iris-{job.id}.pdf"
                             build_pdf(paths, out)
-                            await delivery.send_path(
-                                message,
+                            await upload_path_to_telegram(
                                 out,
+                                as_video=False,
                                 caption=f"📕 IRIS • {len(paths)} página(s)",
                             )
                             delivered = paths + [out]
                         elif bundle_mode == "zip":
                             out = settings.downloads_dir / f"iris-{job.id}.zip"
                             build_zip(paths, out)
-                            await delivery.send_path(
-                                message,
+                            await upload_path_to_telegram(
                                 out,
+                                as_video=False,
                                 caption=f"🗜️ IRIS • {len(paths)} arquivo(s)",
                             )
                             delivered = paths + [out]
                         else:
                             for path in paths:
-                                await delivery.send_path(
-                                    message,
+                                await upload_path_to_telegram(
                                     path,
                                     as_video=delivery_mode == "video",
                                     caption=f"✨ IRIS • {path.name}",
