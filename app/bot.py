@@ -629,7 +629,7 @@ async def run_bot() -> None:
         selected = [
             resource
             for resource in selected
-            if not resource.drm and not resource.metadata.get("raw_downloadable") is False
+            if not resource.drm and resource.metadata.get("raw_downloadable") is not False
         ]
         if not selected:
             await query.edit_message_text(
