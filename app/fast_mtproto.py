@@ -19,7 +19,9 @@ def connection_count(file_size: int) -> int:
         return 4
     if file_size < 64 * 1024 * 1024:
         return 8
-    return 12
+    if file_size < 128 * 1024 * 1024:
+        return 12
+    return 16
 
 
 async def _new_sender(client):
