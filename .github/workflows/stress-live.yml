@@ -1,0 +1,127 @@
+name: Iris stress live
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/stress-live.yml"
+
+jobs:
+  stress:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      - run: python -m playwright install --with-deps chromium
+      - name: Run 1000 synthetic rounds and real-site matrix
+        env:
+          IRIS_DOWNLOADS_DIR: /tmp/iris-stress
+          IRIS_MAX_BROWSER_REQUESTS: "1600"
+          IRIS_REQUEST_TIMEOUT: "20"
+        run: |
+          pytest -q tests/test_stress_matrix.py tests/test_userbot_delivery.py
+          python - <<'PY'
+          import asyncio, json, time
+          from pathlib import Path
+          import httpx
+
+          from app.analyzer import Analyzer
+          from app.content import chapter_pages, content_summary
+          from app.downloads import DownloadEngine
+          from app.models import MediaResource, ResourceType
+
+          PAGES = {
+              "example": "https://example.com/",
+              "python": "https://www.python.org/",
+              "wikipedia": "https://www.wikipedia.org/",
+              "mdn-video": "https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/video",
+              "g1": "https://g1.globo.com/",
+              "cnn-brasil": "https://www.cnnbrasil.com.br/",
+              "bbc-portuguese": "https://www.bbc.com/portuguese",
+              "guardian": "https://www.theguardian.com/international",
+              "reuters": "https://www.reuters.com/world/",
+          }
+
+          CORE = {
+              "adult": "https://pornocomlegenda.blog/meia-irma-ensinando-o-irmao-a-durar-mais-no-sexo-family-therapy-legendado/",
+              "mangaplus": "https://mangaplus.shueisha.co.jp/viewer/1009176",
+              "crunchyroll": "https://www.crunchyroll.com/pt-br/watch/GMKUX478J/jobless-reincarnation",
+              "hls-mux": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+              "dash-shaka": "https://storage.googleapis.com/shaka-demo-assets/angel-one/dash.mpd",
+          }
+
+          DOWNLOADS = [
+              ("jpeg", "https://httpbin.org/image/jpeg", ResourceType.IMAGE, "image.jpg"),
+              ("png", "https://httpbin.org/image/png", ResourceType.IMAGE, "image.png"),
+              ("pdf", "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf", ResourceType.DOCUMENT, "file.pdf"),
+              ("mp4", "https://download.samplelib.com/mp4/sample-5s.mp4", ResourceType.VIDEO, "video.mp4"),
+              ("1mb", "https://media.githubusercontent.com/media/inventer-dev/speed-test-files/main/1MB.bin", ResourceType.OTHER, "1MB.bin"),
+              ("8mb", "https://media.githubusercontent.com/media/inventer-dev/speed-test-files/main/8MB.bin", ResourceType.OTHER, "8MB.bin"),
+              ("32mb", "https://media.githubusercontent.com/media/inventer-dev/speed-test-files/main/32MB.bin", ResourceType.OTHER, "32MB.bin"),
+          ]
+
+          def emit(kind, name, **data):
+              print("IRIS_STRESS " + json.dumps({"kind": kind, "name": name, **data}, ensure_ascii=False))
+
+          async def analyze(name, url, deep=False):
+              started = time.monotonic()
+              try:
+                  result = await Analyzer().analyze(url, deep=deep)
+                  emit("analyze", name, ok=True, seconds=round(time.monotonic()-started, 3),
+                       total=len(result.resources), summary=content_summary(result),
+                       warnings=result.warnings[:4],
+                       pages=len(chapter_pages(result)))
+                  return result
+              except Exception as exc:
+                  emit("analyze", name, ok=False, seconds=round(time.monotonic()-started, 3),
+                       error=f"{type(exc).__name__}: {str(exc)[:240]}")
+                  return None
+
+          async def download(name, url, kind, filename):
+              started = time.monotonic()
+              try:
+                  path = await DownloadEngine().download(MediaResource(url=url, type=kind), filename=filename)
+                  elapsed = time.monotonic()-started
+                  size = path.stat().st_size
+                  emit("download", name, ok=True, seconds=round(elapsed,3), bytes=size,
+                       mbps=round((size/1024/1024)/elapsed,2) if elapsed else None)
+              except Exception as exc:
+                  emit("download", name, ok=False, seconds=round(time.monotonic()-started,3),
+                       error=f"{type(exc).__name__}: {str(exc)[:240]}")
+
+          async def main():
+              Path("/tmp/iris-stress").mkdir(parents=True, exist_ok=True)
+
+              # News/general pages: compatibility and latency, no heavy browser.
+              for name, url in PAGES.items():
+                  await analyze(name, url, deep=False)
+
+              # Representative dynamic/protected/media cases.
+              adult = await analyze("adult", CORE["adult"], deep=True)
+              manga = await analyze("mangaplus", CORE["mangaplus"], deep=True)
+              crunchy = await analyze("crunchyroll", CORE["crunchyroll"], deep=True)
+              await analyze("hls-mux", CORE["hls-mux"], deep=False)
+              await analyze("dash-shaka", CORE["dash-shaka"], deep=False)
+
+              if adult:
+                  media = [r for r in adult.resources if r.type in {ResourceType.VIDEO, ResourceType.PLAYLIST, ResourceType.STREAM} and not r.drm]
+                  emit("assert", "adult-media", ok=bool(media), count=len(media))
+              if manga:
+                  pages = chapter_pages(manga)
+                  emit("assert", "mangaplus-pages", ok=len(pages)==21,
+                       count=len(pages),
+                       protected=sum(bool(r.metadata.get("viewer_protected")) for r in pages))
+              if crunchy:
+                  drm = [r for r in crunchy.resources if r.drm]
+                  emit("assert", "crunchyroll-drm", ok=bool(drm), count=len(drm))
+
+              for args in DOWNLOADS:
+                  await download(*args)
+
+          asyncio.run(main())
+          PY
