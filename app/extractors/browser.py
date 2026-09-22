@@ -1,0 +1,83 @@
+from __future__ import annotations
+
+import asyncio
+from contextlib import suppress
+from pathlib import Path
+
+from app.classifier import classify_resource
+from app.models import MediaResource, ResourceType
+from app.security import UnsafeUrlError, validate_public_url
+
+
+async def probe_browser(url: str, timeout_ms: int = 18_000, max_requests: int = 1200) -> list[MediaResource]:
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError:
+        return []
+
+    found: list[MediaResource] = []
+    lock = asyncio.Lock()
+
+    async with async_playwright() as p:
+        try:
+            browser = await p.chromium.launch(headless=True)
+        except Exception:
+            executable = Path(p.chromium.executable_path)
+            if not executable.exists():
+                raise
+            browser = await p.chromium.launch(headless=True, executable_path=str(executable))
+        context = await browser.new_context(ignore_https_errors=False)
+        page = await context.new_page()
+
+        async def guard(route):
+            request_url = route.request.url
+            try:
+                await validate_public_url(request_url)
+            except (UnsafeUrlError, ValueError):
+                await route.abort()
+                return
+            await route.continue_()
+
+        await page.route("**/*", guard)
+
+        async def on_response(response):
+            async with lock:
+                if len(found) >= max_requests:
+                    return
+            ctype = response.headers.get("content-type")
+            kind = classify_resource(response.url, ctype)
+            if kind == ResourceType.OTHER:
+                return
+            try:
+                await validate_public_url(response.url)
+            except (UnsafeUrlError, ValueError):
+                return
+            size = None
+            try:
+                size = int(response.headers.get("content-length", ""))
+            except ValueError:
+                pass
+            async with lock:
+                found.append(
+                    MediaResource(
+                        url=response.url,
+                        type=kind,
+                        source="browser:network",
+                        mime_type=ctype,
+                        size=size,
+                        headers={"referer": page.url} if page.url else {},
+                    )
+                )
+
+        page.on("response", on_response)
+        try:
+            await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+            with suppress(Exception):
+                await page.wait_for_load_state("networkidle", timeout=5_000)
+            with suppress(Exception):
+                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                await page.wait_for_timeout(800)
+        finally:
+            await context.close()
+            await browser.close()
+    return found
