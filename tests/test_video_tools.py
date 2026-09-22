@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from app.fast_mtproto import connection_count
-from app.video_tools import ensure_faststart, make_thumbnail, probe_video
+from app.video_tools import ensure_faststart, make_thumbnail, normalize_video_mp4, probe_video
 
 
 def test_mtproto_connection_scaling():
@@ -47,3 +47,34 @@ async def test_ffprobe_and_thumbnail_pipeline(tmp_path: Path):
     data = thumb.read_bytes()
     assert data.startswith(b"\xff\xd8\xff")
     assert 0 < len(data) < 200 * 1024
+
+
+@pytest.mark.asyncio
+async def test_normalizes_webm_to_real_mp4(tmp_path: Path):
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        pytest.skip("ffmpeg/ffprobe indisponível no runner")
+
+    source = tmp_path / "sample.webm"
+    proc = await __import__("asyncio").create_subprocess_exec(
+        "ffmpeg",
+        "-hide_banner", "-loglevel", "error",
+        "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=15",
+        "-f", "lavfi", "-i", "sine=frequency=700:sample_rate=44100",
+        "-t", "1.5",
+        "-c:v", "libvpx-vp9",
+        "-c:a", "libopus",
+        "-y", str(source),
+    )
+    assert await proc.wait() == 0
+
+    output, generated = await normalize_video_mp4(source)
+    try:
+        assert generated is True
+        assert output.suffix == ".mp4"
+        info = await probe_video(output)
+        assert info.codec == "h264"
+        assert info.audio_codec == "aac"
+        assert "mp4" in (info.format_name or "")
+    finally:
+        if generated:
+            output.unlink(missing_ok=True)
