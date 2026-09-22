@@ -628,7 +628,10 @@ class SiteQueueManager:
         )
 
         caption = f"🎬 <b>{html_lib.escape(title[:220])}</b>\n\n✨ <i>IRIS</i>"
-        local_mode = item.status == "retry_local" or item.attempts > 1
+        # For this site's large CDN videos, Telegram external-URL fetches
+        # regularly time out. The catalogue queue intentionally exercises the
+        # full production path: web download -> native MTProto video upload.
+        local_mode = True
 
         if not local_mode and media.type == ResourceType.VIDEO and not media.drm:
             try:
