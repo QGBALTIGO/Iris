@@ -13,6 +13,10 @@ _MEDIA_URL_RE = re.compile(
     r"https?://[^\s'\"<>\\]+?\.(?:m3u8|mpd|mp4|mkv|webm|mov|m4v|mp3|m4a|aac|ogg|opus|wav|flac|srt|vtt|ass|pdf|zip)(?:\?[^\s'\"<>\\]*)?",
     re.I,
 )
+_REL_MEDIA_RE = re.compile(
+    r"""[\"']((?:/|\./|\.\./)[^\"'<>]+?\.(?:m3u8|mpd|mp4|mkv|webm|mov|m4v|mp3|m4a|aac|ogg|opus|wav|flac|srt|vtt|ass|pdf|zip)(?:\?[^\"'<>]*)?)[\"']""",
+    re.I,
+)
 
 
 def _absolute(base: str, value: str | None) -> str | None:
@@ -101,6 +105,8 @@ def extract_html_resources(html: str, base_url: str) -> tuple[str | None, list[M
             continue
         for match in _MEDIA_URL_RE.findall(text):
             _push(resources, base_url, match.replace("\\/", "/"), "html:script")
+        for match in _REL_MEDIA_RE.findall(text):
+            _push(resources, base_url, match.replace("\\/", "/"), "html:script-relative")
 
     # Iframes and generic links are useful context but should not pollute the media count.
     for item in resources:
