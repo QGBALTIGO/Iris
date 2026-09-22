@@ -17,6 +17,7 @@ from app.models import AnalyzeResult, DownloadJob, JobState, MediaResource, Reso
 from app.selftest import run_telegram_selftest
 from app.settings import settings
 from app.userbot import userbot
+from app.video_smoke import run_native_video_smoke
 
 _ANALYSES: dict[str, AnalyzeResult] = {}
 _AUTH_STAGE: str | None = None
@@ -922,6 +923,16 @@ async def run_bot() -> None:
                     f"⚠️ <b>Benchmark falhou</b>\n\n<code>{_safe(str(exc), 220)}</code>",
                 )
         asyncio.create_task(_benchmark_once(), name="iris-admin-benchmark")
+
+    if settings.run_video_smoke and settings.admin_id:
+        async def _video_smoke_once():
+            await asyncio.sleep(4)
+            try:
+                await run_native_video_smoke(application.bot, settings.admin_id)
+                print("IRIS_VIDEO_SMOKE_SENT", flush=True)
+            except Exception as exc:
+                print(f"IRIS_VIDEO_SMOKE_ERROR {type(exc).__name__}: {exc}", flush=True)
+        asyncio.create_task(_video_smoke_once(), name="iris-native-video-smoke")
 
     try:
         await asyncio.Event().wait()
