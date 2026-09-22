@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import shutil
 import time
 import uuid
@@ -12,10 +13,13 @@ from app.content import chapter_pages, content_images, content_summary
 from app.delivery import DeliveryManager, build_pdf, build_zip, human_bytes
 from app.jobs import JobStore
 from app.models import AnalyzeResult, DownloadJob, JobState, MediaResource, ResourceType
-from app.settings import settings
 from app.selftest import run_telegram_selftest
+from app.settings import settings
+from app.userbot import userbot
 
 _ANALYSES: dict[str, AnalyzeResult] = {}
+_AUTH_STAGE: str | None = None
+
 analyzer = Analyzer()
 jobs = JobStore()
 delivery = DeliveryManager()
@@ -26,16 +30,28 @@ _BUCKET_TYPES = {
     "f": {ResourceType.DOCUMENT, ResourceType.ARCHIVE, ResourceType.SUBTITLE},
 }
 _BUCKET_NAMES = {
-    "v": "Vídeos",
-    "a": "Áudios",
-    "p": "Páginas do capítulo",
-    "i": "Imagens",
-    "f": "Arquivos",
+    "v": "🎬 Vídeos",
+    "a": "🎵 Áudios",
+    "p": "📖 Páginas",
+    "i": "🖼️ Imagens",
+    "f": "📦 Arquivos",
 }
 
 
-def _authorized(user_id: int | None) -> bool:
-    return settings.admin_id is None or user_id == settings.admin_id
+def _is_admin(user_id: int | None) -> bool:
+    return bool(settings.admin_id and user_id == settings.admin_id)
+
+
+def _can_use(user_id: int | None) -> bool:
+    return _is_admin(user_id) or settings.public_enabled
+
+
+def _safe(value: str | None, limit: int = 160) -> str:
+    return html.escape((value or "").strip()[:limit])
+
+
+def _domain(url: str) -> str:
+    return urlsplit(url).netloc.removeprefix("www.")
 
 
 def resources_for_bucket(result: AnalyzeResult, bucket: str) -> list[MediaResource]:
@@ -60,191 +76,215 @@ def progress_text(job: DownloadJob, speed_bps: float | None = None) -> str:
     total = len(job.items)
     completed = sum(item.state == JobState.COMPLETED for item in job.items)
     failed = sum(item.state == JobState.FAILED for item in job.items)
-    cancelled = sum(item.state == JobState.CANCELLED for item in job.items)
     aggregate = sum(item.progress for item in job.items) / total if total else 0.0
-    filled = min(14, round(aggregate * 14))
-    bar = "█" * filled + "░" * (14 - filled)
+    filled = min(12, round(aggregate * 12))
+    bar = "█" * filled + "░" * (12 - filled)
     downloaded = sum(item.bytes_downloaded for item in job.items)
     lines = [
-        "IRIS • Download",
-        f"{bar}  {aggregate * 100:.0f}%",
-        f"Concluídos: {completed}/{total}",
+        "⬇️ <b>Baixando</b>",
+        f"<code>{bar}</code>  <b>{aggregate * 100:.0f}%</b>",
+        "",
+        f"📦 <b>{completed}/{total}</b> concluído(s)",
     ]
     if downloaded:
-        speed = f" · {human_bytes(int(speed_bps))}/s" if speed_bps and speed_bps > 0 else ""
-        lines.append(f"Transferido: {human_bytes(downloaded)}{speed}")
+        speed = f" • ⚡ {human_bytes(int(speed_bps))}/s" if speed_bps and speed_bps > 0 else ""
+        lines.append(f"💾 {human_bytes(downloaded)}{speed}")
     if failed:
-        lines.append(f"Falhas: {failed}")
-    if cancelled:
-        lines.append(f"Cancelados: {cancelled}")
+        lines.append(f"⚠️ {failed} falha(s)")
     running = next((item for item in job.items if item.state == JobState.RUNNING), None)
     if running:
         name = Path(urlsplit(running.url).path).name or "arquivo"
-        lines.append(f"Agora: {name[:50]} · {running.progress * 100:.0f}%")
+        lines.extend(["", f"⏳ <i>{_safe(name, 52)}</i>"])
     return "\n".join(lines)
-
-
-def deliverable_paths(job: DownloadJob, limit_bytes: int) -> tuple[list[Path], list[Path]]:
-    sendable: list[Path] = []
-    oversized: list[Path] = []
-    for item in job.items:
-        if item.state != JobState.COMPLETED or not item.output_path:
-            continue
-        path = Path(item.output_path)
-        if not path.is_file():
-            continue
-        if path.stat().st_size <= limit_bytes:
-            sendable.append(path)
-        else:
-            oversized.append(path)
-    return sendable, oversized
-
-
-def _all_completed_paths(job: DownloadJob) -> list[Path]:
-    out: list[Path] = []
-    for item in job.items:
-        if item.state == JobState.COMPLETED and item.output_path:
-            path = Path(item.output_path)
-            if path.is_file():
-                out.append(path)
-    return out
-
-
-def _domain(url: str) -> str:
-    return urlsplit(url).netloc.removeprefix("www.")
-
-
-def _short_title(result: AnalyzeResult) -> str:
-    value = (result.title or _domain(result.final_url) or result.final_url).strip()
-    return value[:120]
 
 
 def _analysis_text(result: AnalyzeResult, elapsed: float | None = None) -> str:
     stats = content_summary(result)
-    lines = ["IRIS • Análise concluída", _short_title(result), _domain(result.final_url), ""]
+    title = _safe(result.title or _domain(result.final_url) or result.final_url, 110)
+    lines = [
+        "🔎 <b>Análise concluída</b>",
+        "",
+        f"🎯 <b>{title}</b>",
+        f"🌐 <code>{_safe(_domain(result.final_url), 80)}</code>",
+        "",
+    ]
     if stats["videos"]:
-        lines.append(f"Vídeos/streams: {stats['videos']}")
+        lines.append(f"🎬 Vídeos/streams: <b>{stats['videos']}</b>")
     if stats["audio"]:
-        lines.append(f"Áudios: {stats['audio']}")
+        lines.append(f"🎵 Áudios: <b>{stats['audio']}</b>")
     if stats["chapter_pages"]:
-        lines.append(f"Páginas do capítulo: {stats['chapter_pages']}")
-        pages = chapter_pages(result)
-        if pages and any(p.metadata.get("raw_downloadable") is False for p in pages):
-            lines.append("Exportação das páginas: conteúdo renderizado/protegido pelo leitor")
+        protected = any(r.metadata.get("viewer_protected") for r in chapter_pages(result))
+        lock = " 🔒" if protected else ""
+        lines.append(f"📖 Páginas do capítulo: <b>{stats['chapter_pages']}</b>{lock}")
     if stats["images"]:
-        lines.append(f"Imagens úteis: {stats['images']}")
+        lines.append(f"🖼️ Imagens úteis: <b>{stats['images']}</b>")
     if stats["files"]:
-        lines.append(f"Arquivos: {stats['files']}")
+        lines.append(f"📦 Arquivos: <b>{stats['files']}</b>")
     if stats["drm"]:
-        lines.append(f"Protegidos por DRM: {stats['drm']}")
+        lines.append(f"🔒 Mídia protegida: <b>{stats['drm']}</b>")
     if not any(stats.values()):
-        lines.append("Nenhum recurso útil foi identificado.")
+        lines.append("🤷 Nenhum recurso útil encontrado.")
     if elapsed is not None:
-        lines.extend(["", f"Análise: {elapsed:.1f}s"])
-    if result.warnings:
-        lines.append(f"Avisos técnicos: {len(result.warnings)}")
+        lines.extend(["", f"⏱️ <i>{elapsed:.1f}s</i>"])
     return "\n".join(lines)
+
+
+def _all_completed_paths(job: DownloadJob) -> list[Path]:
+    paths: list[Path] = []
+    for item in job.items:
+        if item.state == JobState.COMPLETED and item.output_path:
+            path = Path(item.output_path)
+            if path.is_file():
+                paths.append(path)
+    return paths
 
 
 async def run_bot() -> None:
     if not settings.bot_token:
         raise RuntimeError("IRIS_BOT_TOKEN não configurado")
-    try:
-        from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
-        from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
-    except ImportError as exc:
-        raise RuntimeError("python-telegram-bot não está instalado") from exc
+
+    from telegram import (
+        BotCommand,
+        BotCommandScopeChat,
+        BotCommandScopeDefault,
+        InlineKeyboardButton,
+        InlineKeyboardMarkup,
+        Update,
+    )
+    from telegram.constants import ParseMode
+    from telegram.ext import (
+        Application,
+        CallbackQueryHandler,
+        CommandHandler,
+        ContextTypes,
+        Defaults,
+        MessageHandler,
+        filters,
+    )
+
+    defaults = Defaults(parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+    application = Application.builder().token(settings.bot_token).defaults(defaults).build()
 
     def summary_markup(result: AnalyzeResult, key: str):
         rows = []
         for bucket in ("v", "p", "a", "i", "f"):
             count = len(resources_for_bucket(result, bucket))
             if count:
-                rows.append([InlineKeyboardButton(f"{_BUCKET_NAMES[bucket]}  {count}", callback_data=f"cat:{bucket}:{key}:0")])
-        rows.append([InlineKeyboardButton("Reanalisar profundamente", callback_data=f"deep:{key}")])
+                rows.append([
+                    InlineKeyboardButton(
+                        f"{_BUCKET_NAMES[bucket]} · {count}",
+                        callback_data=f"cat:{bucket}:{key}:0",
+                    )
+                ])
+        rows.append([
+            InlineKeyboardButton("🔬 Reanalisar profundamente", callback_data=f"deep:{key}")
+        ])
         return InlineKeyboardMarkup(rows)
 
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not _authorized(update.effective_user.id if update.effective_user else None):
+        uid = update.effective_user.id if update.effective_user else None
+        if not _can_use(uid):
             return
         await update.effective_message.reply_text(
-            "IRIS\n\n"
-            "Envie um link para localizar vídeos, streams, imagens, capítulos e arquivos. "
-            "Também aceito vídeos/documentos enviados diretamente para mostrar os metadados.\n\n"
-            "Use /ajuda para ver todas as opções."
+            "✨ <b>IRIS</b>\n\n"
+            "Envie um <b>link</b> e eu procuro vídeos, streams, imagens, páginas, áudios e arquivos.\n\n"
+            "🎬 vídeos e players\n"
+            "📖 capítulos e leitores\n"
+            "🖼️ imagens\n"
+            "📦 arquivos\n"
+            "⚡ downloads em lote\n\n"
+            "É só mandar a URL."
         )
 
     async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not _authorized(update.effective_user.id if update.effective_user else None):
+        uid = update.effective_user.id if update.effective_user else None
+        if not _can_use(uid):
             return
         await update.effective_message.reply_text(
-            "IRIS • Ajuda\n\n"
-            "/start — abrir o Iris\n"
-            "/ajuda — ver recursos e instruções\n"
-            "/status — ver motores e configuração\n"
-            "/jobs — ver downloads recentes\n"
-            "/userbot — ver entrega de arquivos grandes\n"
-            "/diagnostico — testar texto, imagem, PDF e vídeo\n"
-            "/limpar — apagar downloads temporários\n\n"
-            "Envie uma URL diretamente. Em leitores de mangá, o Iris separa páginas do capítulo de logos e banners. "
-            "Vídeos podem ser entregues como vídeo ou como arquivo; capítulos podem virar PDF ou ZIP."
+            "💡 <b>Como usar</b>\n\n"
+            "1. Envie uma URL.\n"
+            "2. O Iris identifica o conteúdo disponível.\n"
+            "3. Escolha o que quer baixar.\n"
+            "4. Para vídeos, escolha receber como vídeo ou arquivo.\n"
+            "5. Em leitores compatíveis, páginas podem virar PDF ou ZIP."
         )
 
-    async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not _authorized(update.effective_user.id if update.effective_user else None):
+    async def admin_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not _is_admin(update.effective_user.id if update.effective_user else None):
             return
-        running = sum(j.state in {JobState.QUEUED, JobState.RUNNING} for j in jobs.list())
+        ready = await userbot.is_authorized()
+        label = await userbot.account_label() if ready else "desconectada"
         await update.effective_message.reply_text(
-            "IRIS • Status\n\n"
-            f"Playwright: {'ativo' if settings.browser_enabled else 'desativado'}\n"
-            f"yt-dlp: {'ativo' if settings.ytdlp_enabled and shutil.which('yt-dlp') else 'indisponível'}\n"
-            f"aria2: {'ativo' if shutil.which('aria2c') else 'indisponível'}\n"
-            f"FFmpeg: {'ativo' if shutil.which('ffmpeg') else 'indisponível'}\n"
-            f"Userbot: {'configurado' if delivery.userbot_configured else 'não configurado'}\n"
-            f"Paralelismo de download: {settings.download_concurrency}\n"
-            f"Jobs ativos: {running}"
+            "🛠️ <b>Status administrativo</b>\n\n"
+            f"🌐 Playwright: {'✅' if settings.browser_enabled else '❌'}\n"
+            f"🎞️ yt-dlp: {'✅' if settings.ytdlp_enabled and shutil.which('yt-dlp') else '❌'}\n"
+            f"⚡ aria2: {'✅' if shutil.which('aria2c') else '❌'}\n"
+            f"🎛️ FFmpeg: {'✅' if shutil.which('ffmpeg') else '❌'}\n"
+            f"👤 Conta 06: {'✅' if ready else '❌'} {_safe(label, 80)}\n"
+            f"🔀 Downloads paralelos: <b>{settings.download_concurrency}</b>"
         )
 
-    async def jobs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not _authorized(update.effective_user.id if update.effective_user else None):
+    async def admin_jobs(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not _is_admin(update.effective_user.id if update.effective_user else None):
             return
         recent = jobs.list()[:8]
         if not recent:
-            await update.effective_message.reply_text("IRIS • Downloads\n\nNenhum job nesta sessão.")
+            await update.effective_message.reply_text("📭 <b>Nenhum download nesta sessão.</b>")
             return
-        lines = ["IRIS • Downloads", ""]
+        lines = ["📊 <b>Downloads recentes</b>", ""]
         for job in recent:
             done = sum(i.state == JobState.COMPLETED for i in job.items)
             failed = sum(i.state == JobState.FAILED for i in job.items)
-            lines.append(f"{job.id} · {job.state.value} · {done}/{len(job.items)} concluídos · {failed} falhas")
+            lines.append(f"<code>{job.id}</code> • {done}/{len(job.items)} • ⚠️ {failed}")
         await update.effective_message.reply_text("\n".join(lines))
 
-    async def userbot_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not _authorized(update.effective_user.id if update.effective_user else None):
+    async def admin_userbot(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        global _AUTH_STAGE
+        if not _is_admin(update.effective_user.id if update.effective_user else None):
             return
-        if delivery.userbot_configured:
-            text = "IRIS • Userbot\n\nConfigurado. Arquivos acima do limite do Bot API serão encaminhados pelo userbot."
-        else:
-            text = (
-                "IRIS • Userbot\n\nNão configurado. Para arquivos grandes, defina na Railway:\n"
-                "IRIS_TELEGRAM_API_ID\nIRIS_TELEGRAM_API_HASH\nIRIS_TELEGRAM_SESSION"
+        if await userbot.is_authorized():
+            await update.effective_message.reply_text(
+                "✅ <b>Conta 06 conectada</b>\n\n"
+                f"👤 {_safe(await userbot.account_label(), 100)}\n"
+                "⚡ Arquivos grandes já podem usar MTProto."
             )
-        await update.effective_message.reply_text(text)
-
-    async def diagnostic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not _authorized(update.effective_user.id if update.effective_user else None):
             return
-        message = await update.effective_message.reply_text(
-            "IRIS • Diagnóstico\n\nTestando texto, imagem, PDF e vídeo no Telegram…"
+        try:
+            result = await userbot.begin_login()
+            if result.startswith("already:"):
+                _AUTH_STAGE = None
+                await update.effective_message.reply_text("✅ <b>Conta 06 já está conectada.</b>")
+                return
+            _AUTH_STAGE = "code"
+            await update.effective_message.reply_text(
+                "📲 <b>Conta 06</b>\n\n"
+                "Enviei um código de acesso para a conta.\n"
+                "Mande <b>somente o código</b> aqui nesta conversa.\n\n"
+                "🔐 A mensagem será apagada depois da leitura."
+            )
+        except Exception as exc:
+            await update.effective_message.reply_text(
+                f"⚠️ <b>Não consegui iniciar o login.</b>\n\n<code>{_safe(str(exc), 180)}</code>"
+            )
+
+    async def admin_diag(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not _is_admin(update.effective_user.id if update.effective_user else None):
+            return
+        msg = await update.effective_message.reply_text(
+            "🧪 <b>Diagnóstico em andamento</b>\n\n"
+            "Testando texto, imagem, PDF, vídeo e vídeo como arquivo…"
         )
         try:
             results = await run_telegram_selftest(application.bot, update.effective_chat.id)
-            await message.edit_text("IRIS • Diagnóstico concluído\n\n" + "\n".join(results))
+            pretty = "\n".join(f"• {html.escape(line)}" for line in results)
+            await msg.edit_text(f"✅ <b>Diagnóstico concluído</b>\n\n{pretty}")
         except Exception as exc:
-            await message.edit_text(f"IRIS • Diagnóstico falhou\n\n{type(exc).__name__}: {str(exc)[:220]}")
+            await msg.edit_text(
+                f"⚠️ <b>Diagnóstico falhou</b>\n\n<code>{_safe(str(exc), 220)}</code>"
+            )
 
-    async def clean_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not _authorized(update.effective_user.id if update.effective_user else None):
+    async def admin_clean(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not _is_admin(update.effective_user.id if update.effective_user else None):
             return
         removed = 0
         settings.downloads_dir.mkdir(parents=True, exist_ok=True)
@@ -255,71 +295,144 @@ async def run_bot() -> None:
                     removed += 1
             except OSError:
                 pass
-        await update.effective_message.reply_text(f"IRIS • Limpeza\n\n{removed} arquivo(s) temporário(s) removido(s).")
+        await update.effective_message.reply_text(
+            f"🧹 <b>Limpeza concluída</b>\n\n{removed} arquivo(s) removido(s)."
+        )
 
-    async def on_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not _authorized(update.effective_user.id if update.effective_user else None):
+    async def handle_auth_text(update: Update) -> bool:
+        global _AUTH_STAGE
+        if not _AUTH_STAGE or not _is_admin(update.effective_user.id if update.effective_user else None):
+            return False
+        value = (update.effective_message.text or "").strip()
+        try:
+            await update.effective_message.delete()
+        except Exception:
+            pass
+        try:
+            if _AUTH_STAGE == "code":
+                status = await userbot.submit_code(value)
+                if status == "password":
+                    _AUTH_STAGE = "password"
+                    await update.effective_chat.send_message(
+                        "🔐 <b>Verificação em duas etapas</b>\n\n"
+                        "Envie a senha da Conta 06. A mensagem também será apagada."
+                    )
+                else:
+                    _AUTH_STAGE = None
+                    await update.effective_chat.send_message(
+                        "✅ <b>Conta 06 conectada</b>\n\n"
+                        "A sessão foi salva no volume persistente da Railway. "
+                        "Arquivos grandes já podem ser enviados pelo userbot."
+                    )
+                return True
+            if _AUTH_STAGE == "password":
+                await userbot.submit_password(value)
+                _AUTH_STAGE = None
+                await update.effective_chat.send_message(
+                    "✅ <b>Conta 06 conectada</b>\n\n"
+                    "Sessão persistente criada com sucesso."
+                )
+                return True
+        except Exception as exc:
+            _AUTH_STAGE = None
+            await update.effective_chat.send_message(
+                f"⚠️ <b>Falha ao conectar a Conta 06</b>\n\n<code>{_safe(str(exc), 180)}</code>"
+            )
+            return True
+        return False
+
+    async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        uid = update.effective_user.id if update.effective_user else None
+        if await handle_auth_text(update):
             return
+        if not _can_use(uid):
+            return
+
         value = (update.effective_message.text or "").strip()
         if not value.startswith(("http://", "https://")):
-            await update.effective_message.reply_text("Envie uma URL http:// ou https://, ou use /ajuda.")
+            await update.effective_message.reply_text(
+                "🔗 <b>Envie um link válido</b>\n\n"
+                "Cole uma URL começando com <code>http://</code> ou <code>https://</code>."
+            )
             return
 
         started = time.monotonic()
-        status = await update.effective_message.reply_text("IRIS • Analisando\n\nInspecionando página e recursos diretos…")
+        status = await update.effective_message.reply_text(
+            "🔎 <b>Analisando…</b>\n\n"
+            "⚡ Procurando recursos diretos."
+        )
         try:
             result = await analyzer.analyze(value, deep=False)
             if needs_deep_analysis(result):
-                await status.edit_text("IRIS • Analisando\n\nConteúdo dinâmico detectado. Observando a rede da página…")
+                await status.edit_text(
+                    "🔎 <b>Analisando…</b>\n\n"
+                    "🌐 Página dinâmica detectada. Observando a rede e o player."
+                )
                 result = await analyzer.analyze(value, deep=True)
         except Exception as exc:
             await status.edit_text(
-                "IRIS • Falha na análise\n\n"
-                f"{type(exc).__name__}: {str(exc)[:180] or 'erro sem detalhes'}"
+                "⚠️ <b>Não consegui analisar essa página.</b>\n\n"
+                f"<code>{_safe(type(exc).__name__ + ': ' + str(exc), 220)}</code>"
             )
             return
 
         key = uuid.uuid4().hex[:10]
         _ANALYSES[key] = result
-        elapsed = time.monotonic() - started
-        await status.edit_text(_analysis_text(result, elapsed), reply_markup=summary_markup(result, key))
+        await status.edit_text(
+            _analysis_text(result, time.monotonic() - started),
+            reply_markup=summary_markup(result, key),
+        )
 
     async def on_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not _authorized(update.effective_user.id if update.effective_user else None):
+        uid = update.effective_user.id if update.effective_user else None
+        if not _can_use(uid):
             return
         message = update.effective_message
-        obj = message.video or message.audio or message.document or message.animation
+        obj = (
+            message.video
+            or message.video_note
+            or message.animation
+            or message.audio
+            or message.voice
+            or message.document
+        )
         kind = "arquivo"
         if message.video:
             kind = "vídeo"
-        elif message.audio:
-            kind = "áudio"
+        elif message.video_note:
+            kind = "vídeo circular"
         elif message.animation:
             kind = "animação"
+        elif message.audio:
+            kind = "áudio"
+        elif message.voice:
+            kind = "voz"
         if message.photo:
             obj = message.photo[-1]
             kind = "imagem"
         if obj is None:
             return
+
         name = getattr(obj, "file_name", None) or f"{kind}-{getattr(obj, 'file_unique_id', 'telegram')}"
         size = getattr(obj, "file_size", None)
         mime = getattr(obj, "mime_type", None) or "—"
         duration = getattr(obj, "duration", None)
         width = getattr(obj, "width", None)
         height = getattr(obj, "height", None)
+
         lines = [
-            "IRIS • Mídia recebida",
+            "📥 <b>Mídia recebida</b>",
             "",
-            f"Tipo: {kind}",
-            f"Nome: {name}",
-            f"Tamanho: {human_bytes(size)}",
-            f"MIME: {mime}",
+            f"🎯 Tipo: <b>{_safe(kind)}</b>",
+            f"📄 Nome: <code>{_safe(name, 90)}</code>",
+            f"💾 Tamanho: <b>{human_bytes(size)}</b>",
+            f"🧩 MIME: <code>{_safe(mime, 60)}</code>",
         ]
         if width and height:
-            lines.append(f"Resolução: {width}×{height}")
+            lines.append(f"📐 Resolução: <b>{width}×{height}</b>")
         if duration:
-            lines.append(f"Duração: {duration}s")
-        lines.extend(["", "O arquivo foi reconhecido pelo Telegram. Para localizar mídia dentro de uma página, envie a URL da página."])
+            lines.append(f"⏱️ Duração: <b>{duration}s</b>")
+        lines.extend(["", "✅ Recebido e identificado corretamente."])
         await message.reply_text("\n".join(lines))
 
     async def show_category(query, result: AnalyzeResult, key: str, bucket: str, page: int):
@@ -328,49 +441,75 @@ async def run_bot() -> None:
         page = max(0, min(page, max(0, (len(resources) - 1) // per_page)))
         start = page * per_page
         subset = resources[start : start + per_page]
-        lines = [f"IRIS • {_BUCKET_NAMES.get(bucket, 'Recursos')}", f"{len(resources)} item(ns)", ""]
+        protected_pages = bucket == "p" and any(r.metadata.get("viewer_protected") for r in resources)
+
+        lines = [
+            f"{_BUCKET_NAMES.get(bucket, '📦 Recursos')}",
+            f"<b>{len(resources)}</b> item(ns)",
+            "",
+        ]
         rows = []
 
         if bucket == "p" and resources:
-            raw_exportable = all(r.metadata.get("raw_downloadable", True) is not False for r in resources)
-            if raw_exportable:
-                rows.append([
-                    InlineKeyboardButton("Gerar PDF", callback_data=f"bundle:pdf:{bucket}:{key}"),
-                    InlineKeyboardButton("Gerar ZIP", callback_data=f"bundle:zip:{bucket}:{key}"),
+            if protected_pages:
+                lines.extend([
+                    "🔒 <b>Leitor protegido</b>",
+                    "As páginas foram identificadas, mas este leitor não entrega imagens brutas válidas para exportação.",
+                    "",
                 ])
-                rows.append([InlineKeyboardButton("Enviar páginas", callback_data=f"all:{bucket}:{key}:file")])
             else:
-                lines.append(
-                    "As páginas foram detectadas, mas este leitor não entrega imagens brutas válidas. "
-                    "PDF, ZIP e download em lote ficam desativados para evitar arquivos corrompidos."
-                )
-                lines.append("")
+                rows.append([
+                    InlineKeyboardButton("📕 Gerar PDF", callback_data=f"bundle:pdf:{bucket}:{key}"),
+                    InlineKeyboardButton("🗜️ Gerar ZIP", callback_data=f"bundle:zip:{bucket}:{key}"),
+                ])
+                rows.append([
+                    InlineKeyboardButton("📤 Enviar páginas", callback_data=f"all:{bucket}:{key}:file")
+                ])
         elif bucket == "i" and resources:
-            rows.append([InlineKeyboardButton("Baixar imagens em ZIP", callback_data=f"bundle:zip:{bucket}:{key}")])
+            rows.append([
+                InlineKeyboardButton("🗜️ Baixar imagens em ZIP", callback_data=f"bundle:zip:{bucket}:{key}")
+            ])
 
         for offset, resource in enumerate(subset, start=start):
             label = resource.title or Path(urlsplit(resource.url).path).name or resource.type.value
+            suffix = ""
             quality = resource.quality or (f"{resource.height}p" if resource.height else None)
-            suffix = f" · {quality}" if quality else ""
+            if quality:
+                suffix += f" • {quality}"
             if resource.drm:
-                suffix += " · DRM"
-            lines.append(f"{offset + 1}. {label[:62]}{suffix}")
+                suffix += " • 🔒 DRM"
+            lines.append(f"<b>{offset + 1}.</b> {_safe(label, 58)}{_safe(suffix, 30)}")
             if bucket == "v" and not resource.drm:
-                rows.append([InlineKeyboardButton(f"Baixar {offset + 1}", callback_data=f"mode:{bucket}:{key}:{offset}")])
+                rows.append([
+                    InlineKeyboardButton(
+                        f"⬇️ Baixar {offset + 1}",
+                        callback_data=f"mode:{bucket}:{key}:{offset}",
+                    )
+                ])
             elif bucket not in {"p", "i"} and not resource.drm:
-                rows.append([InlineKeyboardButton(f"Baixar {offset + 1}", callback_data=f"one:{bucket}:{key}:{offset}:file")])
+                rows.append([
+                    InlineKeyboardButton(
+                        f"⬇️ Baixar {offset + 1}",
+                        callback_data=f"one:{bucket}:{key}:{offset}:file",
+                    )
+                ])
 
         if bucket not in {"p", "i"} and len(resources) > 1 and any(not r.drm for r in resources):
-            rows.append([InlineKeyboardButton(f"Baixar todos ({sum(not r.drm for r in resources)})", callback_data=f"all:{bucket}:{key}:file")])
+            rows.append([
+                InlineKeyboardButton(
+                    f"📥 Baixar todos ({sum(not r.drm for r in resources)})",
+                    callback_data=f"all:{bucket}:{key}:file",
+                )
+            ])
 
         nav = []
         if page > 0:
-            nav.append(InlineKeyboardButton("Anterior", callback_data=f"cat:{bucket}:{key}:{page - 1}"))
+            nav.append(InlineKeyboardButton("‹ Anterior", callback_data=f"cat:{bucket}:{key}:{page - 1}"))
         if start + per_page < len(resources):
-            nav.append(InlineKeyboardButton("Próxima", callback_data=f"cat:{bucket}:{key}:{page + 1}"))
+            nav.append(InlineKeyboardButton("Próxima ›", callback_data=f"cat:{bucket}:{key}:{page + 1}"))
         if nav:
             rows.append(nav)
-        rows.append([InlineKeyboardButton("Voltar", callback_data=f"home:x:{key}:0")])
+        rows.append([InlineKeyboardButton("↩️ Voltar", callback_data=f"home:x:{key}:0")])
         await query.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(rows))
 
     async def watch_job(message, job_id: str, *, delivery_mode: str = "file", bundle_mode: str | None = None):
@@ -378,21 +517,26 @@ async def run_bot() -> None:
         last_bytes = 0
         last_at = time.monotonic()
         speed = 0.0
+
         while True:
             job = jobs.get(job_id)
             if not job:
                 return
+
             now = time.monotonic()
             current_bytes = sum(i.bytes_downloaded for i in job.items)
             if now - last_at >= 1:
                 speed = max(0.0, (current_bytes - last_bytes) / (now - last_at))
                 last_bytes = current_bytes
                 last_at = now
+
             text = progress_text(job, speed)
             if text != last:
                 markup = None
                 if job.state in {JobState.QUEUED, JobState.RUNNING}:
-                    markup = InlineKeyboardMarkup([[InlineKeyboardButton("Cancelar", callback_data=f"cancel:{job.id}")]])
+                    markup = InlineKeyboardMarkup([
+                        [InlineKeyboardButton("✖️ Cancelar", callback_data=f"cancel:{job.id}")]
+                    ])
                 try:
                     await message.edit_text(text, reply_markup=markup)
                 except Exception:
@@ -403,60 +547,93 @@ async def run_bot() -> None:
                 paths = _all_completed_paths(job)
                 failed = [item for item in job.items if item.state == JobState.FAILED]
                 delivered: list[Path] = []
+
                 if paths and job.state != JobState.CANCELLED:
                     try:
                         if bundle_mode == "pdf":
                             out = settings.downloads_dir / f"iris-{job.id}.pdf"
                             build_pdf(paths, out)
-                            await delivery.send_path(message, out, caption=f"IRIS · PDF · {len(paths)} página(s)")
+                            channel = await delivery.send_path(
+                                message,
+                                out,
+                                caption=f"📕 IRIS • {len(paths)} página(s)",
+                            )
                             delivered = paths + [out]
                         elif bundle_mode == "zip":
                             out = settings.downloads_dir / f"iris-{job.id}.zip"
                             build_zip(paths, out)
-                            await delivery.send_path(message, out, caption=f"IRIS · ZIP · {len(paths)} arquivo(s)")
+                            channel = await delivery.send_path(
+                                message,
+                                out,
+                                caption=f"🗜️ IRIS • {len(paths)} arquivo(s)",
+                            )
                             delivered = paths + [out]
                         else:
+                            channel = "bot"
                             for path in paths:
-                                await delivery.send_path(
+                                channel = await delivery.send_path(
                                     message,
                                     path,
                                     as_video=delivery_mode == "video",
-                                    caption=f"IRIS · {path.name}",
+                                    caption=f"✨ IRIS • {path.name}",
                                 )
                             delivered = paths
+
+                        if channel == "userbot":
+                            await message.reply_text(
+                                "⚡ <b>Enviado pela Conta 06</b>\n\n"
+                                "Usei MTProto para a entrega deste arquivo."
+                            )
                     except Exception as exc:
-                        await message.reply_text(f"IRIS • Falha na entrega\n\n{type(exc).__name__}: {str(exc)[:220]}")
+                        await message.reply_text(
+                            "⚠️ <b>Falha na entrega</b>\n\n"
+                            f"<code>{_safe(str(exc), 220)}</code>"
+                        )
 
                 if failed:
-                    examples = "\n".join(f"• {Path(urlsplit(i.url).path).name or 'recurso'}: {i.error or 'falha'}" for i in failed[:5])
                     await message.reply_text(
-                        f"IRIS • Download parcial\n\n{len(paths)} concluído(s) · {len(failed)} falha(s)\n{examples}"
+                        f"⚠️ <b>Download parcial</b>\n\n"
+                        f"✅ {len(paths)} concluído(s)\n"
+                        f"❌ {len(failed)} falha(s)"
                     )
                 elif job.state == JobState.COMPLETED:
-                    await message.reply_text(f"IRIS • Concluído\n\n{len(paths)} arquivo(s) processado(s).")
+                    await message.reply_text(
+                        f"✅ <b>Concluído</b>\n\n"
+                        f"{len(paths)} arquivo(s) processado(s)."
+                    )
+
                 await delivery.cleanup(delivered)
                 return
+
             await asyncio.sleep(1.2)
 
     async def launch_download(query, selected: list[MediaResource], *, delivery_mode: str = "file", bundle_mode: str | None = None):
-        selected = [
-            resource
-            for resource in selected
-            if not resource.drm and resource.metadata.get("raw_downloadable", True) is not False
-        ]
+        selected = [resource for resource in selected if not resource.drm and not resource.metadata.get("viewer_protected")]
         if not selected:
-            await query.edit_message_text("IRIS • Indisponível\n\nNenhum recurso baixável nessa seleção.")
+            await query.edit_message_text(
+                "🔒 <b>Indisponível para download</b>\n\n"
+                "Este conteúdo foi detectado, mas está protegido ou não é exportável como arquivo bruto."
+            )
             return
         job = jobs.create(selected)
         jobs.launch(job.id)
         await query.edit_message_text(progress_text(job))
-        asyncio.create_task(watch_job(query.message, job.id, delivery_mode=delivery_mode, bundle_mode=bundle_mode))
+        asyncio.create_task(
+            watch_job(
+                query.message,
+                job.id,
+                delivery_mode=delivery_mode,
+                bundle_mode=bundle_mode,
+            )
+        )
 
     async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         await query.answer()
-        if not _authorized(query.from_user.id if query.from_user else None):
+        uid = query.from_user.id if query.from_user else None
+        if not _can_use(uid):
             return
+
         parts = (query.data or "").split(":")
         action = parts[0] if parts else ""
 
@@ -464,7 +641,7 @@ async def run_bot() -> None:
             jobs.cancel(parts[1])
             job = jobs.get(parts[1])
             if job:
-                await query.edit_message_text(progress_text(job))
+                await query.edit_message_text("✖️ <b>Download cancelado.</b>")
             return
 
         if action == "home" and len(parts) >= 3:
@@ -478,10 +655,13 @@ async def run_bot() -> None:
             key = parts[1]
             result = _ANALYSES.get(key)
             if not result:
-                await query.edit_message_text("IRIS • Análise expirada\n\nEnvie a URL novamente.")
+                await query.edit_message_text("⌛ <b>Análise expirada.</b>\n\nEnvie a URL novamente.")
                 return
             started = time.monotonic()
-            await query.edit_message_text("IRIS • Análise profunda\n\nObservando rede, players e conteúdo carregado dinamicamente…")
+            await query.edit_message_text(
+                "🔬 <b>Análise profunda</b>\n\n"
+                "🌐 Observando rede, player e conteúdo carregado dinamicamente…"
+            )
             deep = await analyzer.analyze(result.final_url, deep=True)
             new_key = uuid.uuid4().hex[:10]
             _ANALYSES[new_key] = deep
@@ -494,34 +674,33 @@ async def run_bot() -> None:
         if action == "cat" and len(parts) >= 4:
             bucket, key, page_raw = parts[1], parts[2], parts[3]
             result = _ANALYSES.get(key)
-            if not result:
-                await query.edit_message_text("IRIS • Análise expirada\n\nEnvie a URL novamente.")
-                return
-            await show_category(query, result, key, bucket, int(page_raw))
+            if result:
+                await show_category(query, result, key, bucket, int(page_raw))
             return
 
         if action == "mode" and len(parts) >= 4:
             bucket, key, index_raw = parts[1], parts[2], parts[3]
-            result = _ANALYSES.get(key)
-            if not result:
-                return
-            resources = resources_for_bucket(result, bucket)
-            index = int(index_raw)
-            if not (0 <= index < len(resources)):
-                return
             rows = [[
-                InlineKeyboardButton("Enviar como vídeo", callback_data=f"one:{bucket}:{key}:{index}:video"),
-                InlineKeyboardButton("Enviar como arquivo", callback_data=f"one:{bucket}:{key}:{index}:file"),
+                InlineKeyboardButton("🎬 Enviar como vídeo", callback_data=f"one:{bucket}:{key}:{index_raw}:video"),
+                InlineKeyboardButton("📦 Enviar como arquivo", callback_data=f"one:{bucket}:{key}:{index_raw}:file"),
+            ], [
+                InlineKeyboardButton("↩️ Voltar", callback_data=f"cat:{bucket}:{key}:0")
             ]]
-            rows.append([InlineKeyboardButton("Voltar", callback_data=f"cat:{bucket}:{key}:0")])
-            await query.edit_message_text("IRIS • Formato de entrega\n\nComo você quer receber este vídeo?", reply_markup=InlineKeyboardMarkup(rows))
+            await query.edit_message_text(
+                "📤 <b>Como você quer receber?</b>",
+                reply_markup=InlineKeyboardMarkup(rows),
+            )
             return
 
         if action == "bundle" and len(parts) >= 4:
             bundle_mode, bucket, key = parts[1], parts[2], parts[3]
             result = _ANALYSES.get(key)
             if result:
-                await launch_download(query, resources_for_bucket(result, bucket), bundle_mode=bundle_mode)
+                await launch_download(
+                    query,
+                    resources_for_bucket(result, bucket),
+                    bundle_mode=bundle_mode,
+                )
             return
 
         if action == "one" and len(parts) >= 5:
@@ -539,53 +718,71 @@ async def run_bot() -> None:
             result = _ANALYSES.get(key)
             if result:
                 await launch_download(query, resources_for_bucket(result, bucket), delivery_mode=mode)
-            return
 
-    application = Application.builder().token(settings.bot_token).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("ajuda", help_cmd))
     application.add_handler(CommandHandler("help", help_cmd))
-    application.add_handler(CommandHandler("status", status_cmd))
-    application.add_handler(CommandHandler("jobs", jobs_cmd))
-    application.add_handler(CommandHandler("userbot", userbot_cmd))
-    application.add_handler(CommandHandler("diagnostico", diagnostic_cmd))
-    application.add_handler(CommandHandler("limpar", clean_cmd))
+    application.add_handler(CommandHandler("status", admin_status))
+    application.add_handler(CommandHandler("downloads", admin_jobs))
+    application.add_handler(CommandHandler("jobs", admin_jobs))
+    application.add_handler(CommandHandler("conta06", admin_userbot))
+    application.add_handler(CommandHandler("diagnostico", admin_diag))
+    application.add_handler(CommandHandler("limpar", admin_clean))
     application.add_handler(CallbackQueryHandler(callbacks))
-    media_filter = filters.VIDEO | filters.AUDIO | filters.Document.ALL | filters.PHOTO | filters.ANIMATION
+
+    media_filter = (
+        filters.VIDEO
+        | filters.VIDEO_NOTE
+        | filters.AUDIO
+        | filters.VOICE
+        | filters.Document.ALL
+        | filters.PHOTO
+        | filters.ANIMATION
+    )
     application.add_handler(MessageHandler(media_filter, on_media))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_url))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
 
     await application.initialize()
-    await application.bot.set_my_commands([
-        BotCommand("start", "Abrir o Iris"),
-        BotCommand("ajuda", "Ver recursos e instruções"),
-        BotCommand("status", "Ver motores e configuração"),
-        BotCommand("jobs", "Ver downloads recentes"),
-        BotCommand("userbot", "Ver entrega de arquivos grandes"),
-        BotCommand("diagnostico", "Testar texto, imagem, PDF e vídeo"),
-        BotCommand("limpar", "Limpar arquivos temporários"),
-    ])
+
+    await application.bot.set_my_commands(
+        [
+            BotCommand("start", "Abrir o Iris"),
+            BotCommand("ajuda", "Como usar"),
+        ],
+        scope=BotCommandScopeDefault(),
+    )
+
+    if settings.admin_id:
+        await application.bot.set_my_commands(
+            [
+                BotCommand("start", "Abrir o Iris"),
+                BotCommand("ajuda", "Como usar"),
+                BotCommand("status", "Status administrativo"),
+                BotCommand("downloads", "Downloads recentes"),
+                BotCommand("conta06", "Conectar a Conta 06"),
+                BotCommand("diagnostico", "Testar entregas"),
+                BotCommand("limpar", "Limpar temporários"),
+            ],
+            scope=BotCommandScopeChat(chat_id=settings.admin_id),
+        )
+
     try:
         await application.bot.set_my_description(
-            "Analisador de páginas e gerenciador de mídia: vídeos, streams, imagens, capítulos, PDF, ZIP e downloads em lote."
+            "🔎 Encontre vídeos, imagens, páginas, áudios e arquivos em links. Downloads em lote, PDF, ZIP e muito mais."
         )
-        await application.bot.set_my_short_description("Analisa páginas e organiza downloads de mídia.")
+        await application.bot.set_my_short_description(
+            "🔎 Analise links e organize downloads de mídia."
+        )
     except Exception:
         pass
+
     await application.start()
     await application.updater.start_polling(drop_pending_updates=False)
-    if settings.notify_startup and settings.admin_id:
-        try:
-            results = await run_telegram_selftest(application.bot, settings.admin_id)
-            await application.bot.send_message(
-                settings.admin_id,
-                "IRIS online. Diagnóstico de entrega:\n" + "\n".join(results),
-            )
-        except Exception:
-            pass
+
     try:
         await asyncio.Event().wait()
     finally:
+        await userbot.close()
         await application.updater.stop()
         await application.stop()
         await application.shutdown()
