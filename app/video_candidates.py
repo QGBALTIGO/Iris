@@ -16,11 +16,12 @@ def video_candidate_rank(resource: MediaResource) -> tuple:
     path = urlsplit(resource.url).path.lower()
     mime = (resource.mime_type or "").lower()
     direct_mp4 = path.endswith(".mp4") or "video/mp4" in mime
+    playlist = resource.type == ResourceType.PLAYLIST or path.endswith((".m3u8", ".mpd"))
     network = resource.source.startswith("browser:network")
     direct_video = resource.type == ResourceType.VIDEO
     ytdlp = resource.metadata.get("engine") == "yt-dlp"
     return (
-        0 if direct_mp4 else 1,
+        0 if direct_mp4 else (1 if playlist else 2),
         0 if network else 1,
         0 if direct_video else 1,
         1 if ytdlp else 0,
@@ -56,6 +57,11 @@ async def download_first_valid_video(
         if r.type in {ResourceType.VIDEO, ResourceType.PLAYLIST, ResourceType.STREAM}
         and not r.drm
         and r.metadata.get("raw_downloadable") is not False
+        and not r.metadata.get("hls_segment")
+        and not (
+            r.source.startswith("browser:")
+            and __import__("urllib.parse").parse.urlsplit(r.url).path.lower().endswith(".ts")
+        )
     ]
     candidates.sort(key=video_candidate_rank)
 
