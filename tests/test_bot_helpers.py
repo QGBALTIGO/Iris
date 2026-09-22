@@ -69,3 +69,17 @@ def test_no_auto_deep_when_video_already_found():
         resources=[MediaResource(url="https://example.com/a.mp4", type=ResourceType.VIDEO)],
     )
     assert needs_deep_analysis(result) is False
+
+
+def test_video_bucket_prioritizes_direct_mp4_over_embed_and_playlist():
+    result = AnalyzeResult(
+        url="https://example.com",
+        final_url="https://example.com",
+        resources=[
+            MediaResource(url="https://example.com/master.m3u8", type=ResourceType.PLAYLIST, source="html:script"),
+            MediaResource(url="https://example.com/watch", type=ResourceType.VIDEO, source="yt-dlp", metadata={"engine":"yt-dlp"}),
+            MediaResource(url="https://cdn.example/movie.mp4", type=ResourceType.VIDEO, source="browser:network"),
+        ],
+    )
+    resources = resources_for_bucket(result, "v")
+    assert resources[0].url == "https://cdn.example/movie.mp4"
