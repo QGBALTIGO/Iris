@@ -12,3 +12,13 @@ Configuração esperada:
 - userbot habilitado somente quando API ID, API hash e StringSession forem configurados.
 
 Para validar a entrega no Telegram, use `/diagnostico`.
+
+## Userbot
+
+Gere a StringSession localmente com:
+
+```bash
+python scripts/generate_userbot_session.py
+```
+
+Cadastre API ID, API Hash e StringSession somente como secrets da Railway.
