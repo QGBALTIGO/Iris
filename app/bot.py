@@ -32,6 +32,16 @@ def resources_for_bucket(result: AnalyzeResult, bucket: str) -> list[MediaResour
     return [resource for resource in result.resources if resource.type in kinds]
 
 
+def needs_deep_analysis(result: AnalyzeResult) -> bool:
+    dynamic_types = {
+        ResourceType.VIDEO,
+        ResourceType.AUDIO,
+        ResourceType.PLAYLIST,
+        ResourceType.STREAM,
+    }
+    return not any(resource.type in dynamic_types for resource in result.resources)
+
+
 def progress_text(job: DownloadJob) -> str:
     total = len(job.items)
     completed = sum(item.state == JobState.COMPLETED for item in job.items)
@@ -110,6 +120,9 @@ async def run_bot() -> None:
         status = await update.effective_message.reply_text("Analisando página…")
         try:
             result = await analyzer.analyze(text, deep=False)
+            if needs_deep_analysis(result):
+                await status.edit_text("Análise rápida concluída. Procurando recursos dinâmicos…")
+                result = await analyzer.analyze(text, deep=True)
         except Exception as exc:
             await status.edit_text(f"Falha na análise: {type(exc).__name__}")
             return

@@ -1,4 +1,4 @@
-from app.bot import deliverable_paths, progress_text, resources_for_bucket
+from app.bot import deliverable_paths, needs_deep_analysis, progress_text, resources_for_bucket
 from app.models import AnalyzeResult, DownloadItemStatus, DownloadJob, JobState, MediaResource, ResourceType
 
 
@@ -50,3 +50,22 @@ def test_deliverable_paths_separates_telegram_sized_files(tmp_path):
     sendable, oversized = deliverable_paths(job, 50)
     assert sendable == [small]
     assert oversized == [big]
+
+
+
+def test_needs_deep_analysis_when_only_images_exist():
+    result = AnalyzeResult(
+        url="https://example.com",
+        final_url="https://example.com",
+        resources=[MediaResource(url="https://example.com/a.jpg", type=ResourceType.IMAGE)],
+    )
+    assert needs_deep_analysis(result) is True
+
+
+def test_no_auto_deep_when_video_already_found():
+    result = AnalyzeResult(
+        url="https://example.com",
+        final_url="https://example.com",
+        resources=[MediaResource(url="https://example.com/a.mp4", type=ResourceType.VIDEO)],
+    )
+    assert needs_deep_analysis(result) is False
