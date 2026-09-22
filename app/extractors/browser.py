@@ -113,6 +113,40 @@ async def probe_browser(
             with suppress(Exception):
                 await page.wait_for_load_state("networkidle", timeout=2_000)
 
+            # Safely nudge common HTML5/custom players so lazy media requests
+            # are actually emitted. No navigation or ad clicks are attempted.
+            async def nudge_players():
+                selectors = [
+                    "video",
+                    "button[aria-label*='play' i]",
+                    ".vjs-big-play-button",
+                    ".plyr__control--overlaid",
+                    ".jw-icon-playback",
+                ]
+                for frame in page.frames:
+                    with suppress(Exception):
+                        await frame.evaluate(
+                            """() => {
+                                for (const v of document.querySelectorAll('video')) {
+                                    try {
+                                        v.muted = true;
+                                        const p = v.play();
+                                        if (p && p.catch) p.catch(() => {});
+                                    } catch (_) {}
+                                }
+                            }"""
+                        )
+                    for selector in selectors[1:]:
+                        with suppress(Exception):
+                            locator = frame.locator(selector).first
+                            if await locator.count():
+                                await locator.click(timeout=700, force=True)
+                                break
+
+            with suppress(Exception):
+                await nudge_players()
+                await page.wait_for_timeout(450)
+
             rounds = max(0, interaction_rounds)
             previous_count = -1
             stable_rounds = 0
@@ -142,6 +176,11 @@ async def probe_browser(
                     await page.keyboard.press("PageDown")
                 with suppress(Exception):
                     await page.wait_for_timeout(180)
+
+                if round_index in {3, 8}:
+                    with suppress(Exception):
+                        await nudge_players()
+                        await page.wait_for_timeout(350)
 
                 async with lock:
                     snapshot = list(found)
