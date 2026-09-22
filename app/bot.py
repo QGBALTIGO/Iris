@@ -13,6 +13,7 @@ from app.delivery import DeliveryManager, build_pdf, build_zip, human_bytes
 from app.jobs import JobStore
 from app.models import AnalyzeResult, DownloadJob, JobState, MediaResource, ResourceType
 from app.settings import settings
+from app.selftest import run_telegram_selftest
 
 _ANALYSES: dict[str, AnalyzeResult] = {}
 analyzer = Analyzer()
@@ -180,6 +181,7 @@ async def run_bot() -> None:
             "/status — ver motores e configuração\n"
             "/jobs — ver downloads recentes\n"
             "/userbot — ver entrega de arquivos grandes\n"
+            "/diagnostico — testar texto, imagem, PDF e vídeo\n"
             "/limpar — apagar downloads temporários\n\n"
             "Envie uma URL diretamente. Em leitores de mangá, o Iris separa páginas do capítulo de logos e banners. "
             "Vídeos podem ser entregues como vídeo ou como arquivo; capítulos podem virar PDF ou ZIP."
@@ -225,6 +227,18 @@ async def run_bot() -> None:
                 "IRIS_TELEGRAM_API_ID\nIRIS_TELEGRAM_API_HASH\nIRIS_TELEGRAM_SESSION"
             )
         await update.effective_message.reply_text(text)
+
+    async def diagnostic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not _authorized(update.effective_user.id if update.effective_user else None):
+            return
+        message = await update.effective_message.reply_text(
+            "IRIS • Diagnóstico\n\nTestando texto, imagem, PDF e vídeo no Telegram…"
+        )
+        try:
+            results = await run_telegram_selftest(application.bot, update.effective_chat.id)
+            await message.edit_text("IRIS • Diagnóstico concluído\n\n" + "\n".join(results))
+        except Exception as exc:
+            await message.edit_text(f"IRIS • Diagnóstico falhou\n\n{type(exc).__name__}: {str(exc)[:220]}")
 
     async def clean_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not _authorized(update.effective_user.id if update.effective_user else None):
@@ -519,6 +533,7 @@ async def run_bot() -> None:
     application.add_handler(CommandHandler("status", status_cmd))
     application.add_handler(CommandHandler("jobs", jobs_cmd))
     application.add_handler(CommandHandler("userbot", userbot_cmd))
+    application.add_handler(CommandHandler("diagnostico", diagnostic_cmd))
     application.add_handler(CommandHandler("limpar", clean_cmd))
     application.add_handler(CallbackQueryHandler(callbacks))
     media_filter = filters.VIDEO | filters.AUDIO | filters.Document.ALL | filters.PHOTO | filters.ANIMATION
@@ -532,6 +547,7 @@ async def run_bot() -> None:
         BotCommand("status", "Ver motores e configuração"),
         BotCommand("jobs", "Ver downloads recentes"),
         BotCommand("userbot", "Ver entrega de arquivos grandes"),
+        BotCommand("diagnostico", "Testar texto, imagem, PDF e vídeo"),
         BotCommand("limpar", "Limpar arquivos temporários"),
     ])
     try:
@@ -545,7 +561,11 @@ async def run_bot() -> None:
     await application.updater.start_polling(drop_pending_updates=False)
     if settings.notify_startup and settings.admin_id:
         try:
-            await application.bot.send_message(settings.admin_id, "IRIS online. Motores carregados e pronto para receber URLs.")
+            results = await run_telegram_selftest(application.bot, settings.admin_id)
+            await application.bot.send_message(
+                settings.admin_id,
+                "IRIS online. Diagnóstico de entrega:\n" + "\n".join(results),
+            )
         except Exception:
             pass
     try:
