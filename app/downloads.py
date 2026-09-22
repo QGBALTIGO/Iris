@@ -4,7 +4,7 @@ import asyncio
 import re
 import shutil
 from pathlib import Path
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import unquote, urljoin, urlsplit
 
 import httpx
 
@@ -39,6 +39,7 @@ def _replay_headers(headers: dict[str, str]) -> dict[str, str]:
 
 def safe_filename(resource: MediaResource, index: int = 1) -> str:
     raw = resource.title or Path(urlsplit(resource.url).path).name or f"download-{index}"
+    raw = unquote(raw)
     raw = re.sub(r"[^\w.()\[\] -]+", "_", raw, flags=re.UNICODE).strip(" ._")
     if not raw:
         raw = f"download-{index}"
