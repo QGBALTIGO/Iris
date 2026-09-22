@@ -78,3 +78,37 @@ async def test_normalizes_webm_to_real_mp4(tmp_path: Path):
     finally:
         if generated:
             output.unlink(missing_ok=True)
+
+
+@pytest.mark.asyncio
+async def test_normalizes_odd_dimensions_and_weird_codec(tmp_path: Path):
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        pytest.skip("ffmpeg/ffprobe indisponível no runner")
+
+    source = tmp_path / "odd.mkv"
+    proc = await __import__("asyncio").create_subprocess_exec(
+        "ffmpeg",
+        "-hide_banner", "-loglevel", "error",
+        "-f", "lavfi", "-i", "testsrc=size=405x719:rate=17",
+        "-f", "lavfi", "-i", "sine=frequency=500:sample_rate=32000",
+        "-t", "1.2",
+        "-c:v", "ffv1",
+        "-pix_fmt", "yuv444p",
+        "-c:a", "pcm_s16le",
+        "-y", str(source),
+    )
+    assert await proc.wait() == 0
+
+    output, generated = await normalize_video_mp4(source)
+    try:
+        assert generated is True
+        assert output.suffix == ".mp4"
+        info = await probe_video(output)
+        assert info.width % 2 == 0
+        assert info.height % 2 == 0
+        assert info.audio_codec == "aac"
+        assert "mp4" in (info.format_name or "")
+        assert info.codec in {"h264", "mpeg4"}
+    finally:
+        if generated:
+            output.unlink(missing_ok=True)
