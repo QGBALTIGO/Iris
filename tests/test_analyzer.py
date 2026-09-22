@@ -1,7 +1,7 @@
 import httpx
 import pytest
 
-from app.analyzer import Analyzer
+from app.analyzer import Analyzer, _valid_image_payload
 from app.fetcher import SafeFetcher
 from app.models import ResourceType
 from app.settings import Settings
@@ -25,3 +25,10 @@ async def test_analyzer_page_and_manifest(monkeypatch, tmp_path):
     assert result.title == "Page"
     playlist = next(r for r in result.resources if r.type == ResourceType.PLAYLIST)
     assert playlist.variants[0].label == "720p"
+
+
+def test_valid_image_payload_signatures():
+    assert _valid_image_payload(b"\xff\xd8\xff" + b"x" * 20)
+    assert _valid_image_payload(b"\x89PNG\r\n\x1a\n" + b"x" * 20)
+    assert _valid_image_payload(b"RIFFxxxxWEBP" + b"x" * 20)
+    assert not _valid_image_payload(bytes.fromhex("95a95bd4f2e4f9ced6ca2ef45fa5b585"))
