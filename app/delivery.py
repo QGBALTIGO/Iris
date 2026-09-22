@@ -210,6 +210,15 @@ class DeliveryManager:
         as_video: bool = False,
         caption: str | None = None,
     ) -> bool:
+        # Native Telegram videos need duration/dimensions/thumbnail and a real
+        # MP4 container. Remote URL sends cannot guarantee those attributes,
+        # so video requests use the local normalize->upload pipeline.
+        if as_video and resource.type in {
+            ResourceType.VIDEO,
+            ResourceType.PLAYLIST,
+            ResourceType.STREAM,
+        }:
+            return False
         if resource.drm or resource.type in {ResourceType.PLAYLIST, ResourceType.STREAM}:
             return False
         if resource.metadata.get("engine") == "yt-dlp":
