@@ -69,7 +69,7 @@ class DeliveryManager:
                 await message.reply_document(document=payload, caption=caption)
                 return "bot:file"
         if self.userbot_configured:
-            await self._send_userbot(path, caption=caption)
+            await self._send_userbot(path, caption=caption, as_video=as_video)
             await message.reply_text(
                 f"Arquivo grande enviado pelo userbot: {path.name} · {human_bytes(size)}"
             )
@@ -80,7 +80,7 @@ class DeliveryManager:
         )
         return "server"
 
-    async def _send_userbot(self, path: Path, caption: str | None = None) -> None:
+    async def _send_userbot(self, path: Path, caption: str | None = None, as_video: bool = False) -> None:
         from telethon import TelegramClient  # type: ignore
         from telethon.sessions import StringSession  # type: ignore
 
@@ -98,7 +98,13 @@ class DeliveryManager:
                 target = "me" if self.config.admin_id and getattr(me, "id", None) == self.config.admin_id else self.config.admin_id
                 if not target:
                     raise RuntimeError("IRIS_ADMIN_ID não configurado")
-                await client.send_file(target, str(path), caption=caption or path.name, force_document=True)
+                await client.send_file(
+                    target,
+                    str(path),
+                    caption=caption or path.name,
+                    force_document=not as_video,
+                    supports_streaming=as_video,
+                )
             finally:
                 await client.disconnect()
 
