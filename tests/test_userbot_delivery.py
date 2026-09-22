@@ -22,7 +22,7 @@ class FakeMessage:
 
 
 @pytest.mark.asyncio
-async def test_userbot_remote_delivery_targets_bot_username_not_peeruser(monkeypatch):
+async def test_userbot_remote_nonvideo_targets_bot_username_not_peeruser(monkeypatch):
     calls = {}
 
     async def authorized():
@@ -37,6 +37,33 @@ async def test_userbot_remote_delivery_targets_bot_username_not_peeruser(monkeyp
 
     message = FakeMessage()
     resource = MediaResource(
+        url="https://cdn.example/image.jpg",
+        type=ResourceType.IMAGE,
+    )
+    ok = await DeliveryManager().send_remote_resource(
+        message,
+        resource,
+        as_video=False,
+        caption="Teste",
+    )
+
+    assert ok is True
+    assert calls["send"][0] == "IrisExampleBot"
+    assert calls["send"][1] == "https://cdn.example/image.jpg"
+    relay = parse_relay_caption(calls["send"][2]["caption"])
+    assert relay == (1852596083, "Teste")
+    assert calls["send"][2]["as_video"] is False
+
+
+@pytest.mark.asyncio
+async def test_remote_video_is_forced_through_local_mp4_pipeline(monkeypatch):
+    async def authorized():
+        return True
+
+    monkeypatch.setattr(delivery_module.userbot, "is_authorized", authorized)
+
+    message = FakeMessage()
+    resource = MediaResource(
         url="https://cdn.example/video.mp4",
         type=ResourceType.VIDEO,
     )
@@ -47,12 +74,7 @@ async def test_userbot_remote_delivery_targets_bot_username_not_peeruser(monkeyp
         caption="Teste",
     )
 
-    assert ok is True
-    assert calls["send"][0] == "IrisExampleBot"
-    assert calls["send"][1] == "https://cdn.example/video.mp4"
-    relay = parse_relay_caption(calls["send"][2]["caption"])
-    assert relay == (1852596083, "Teste")
-    assert calls["send"][2]["as_video"] is True
+    assert ok is False
 
 
 def test_relay_caption_rejects_invalid_payload():
