@@ -156,6 +156,7 @@ def _all_completed_paths(job: DownloadJob) -> list[Path]:
 
 
 async def run_bot() -> None:
+    global _AUTH_STAGE
     if not settings.bot_token:
         raise RuntimeError("IRIS_BOT_TOKEN não configurado")
 
@@ -794,6 +795,26 @@ async def run_bot() -> None:
 
     await application.start()
     await application.updater.start_polling(drop_pending_updates=False)
+
+    if settings.auto_userbot_login and settings.admin_id and userbot.configured:
+        try:
+            if not await userbot.is_authorized():
+                result = await userbot.begin_login()
+                if result == "code":
+                    _AUTH_STAGE = "code"
+                    await application.bot.send_message(
+                        settings.admin_id,
+                        "📲 <b>Conta 06</b>\n\n"
+                        "O código de acesso foi solicitado automaticamente.\n"
+                        "Envie <b>somente o código</b> aqui para concluir a conexão.\n\n"
+                        "🔐 Sua mensagem será apagada após a leitura.",
+                    )
+        except Exception as exc:
+            await application.bot.send_message(
+                settings.admin_id,
+                "⚠️ <b>Conta 06</b>\n\n"
+                f"Não consegui iniciar o login automaticamente: <code>{_safe(str(exc), 160)}</code>",
+            )
 
     try:
         await asyncio.Event().wait()
