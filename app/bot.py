@@ -625,13 +625,39 @@ async def run_bot() -> None:
             await asyncio.sleep(1.2)
 
     async def launch_download(query, selected: list[MediaResource], *, delivery_mode: str = "file", bundle_mode: str | None = None):
-        selected = [resource for resource in selected if not resource.drm and not resource.metadata.get("viewer_protected")]
+        selected = [
+            resource
+            for resource in selected
+            if not resource.drm and not resource.metadata.get("viewer_protected")
+        ]
         if not selected:
             await query.edit_message_text(
                 "🔒 <b>Indisponível para download</b>\n\n"
                 "Este conteúdo foi detectado, mas está protegido ou não é exportável como arquivo bruto."
             )
             return
+
+        # Fastest possible route: for a single direct resource, ask Telegram to
+        # fetch the URL itself. This avoids the Railway download + Telegram
+        # re-upload round-trip entirely. Any failure falls back transparently.
+        if len(selected) == 1 and bundle_mode is None:
+            resource = selected[0]
+            try:
+                sent = await delivery.send_remote_resource(
+                    query.message,
+                    resource,
+                    as_video=delivery_mode == "video",
+                    caption="⚡ <b>IRIS</b> • entrega direta",
+                )
+                if sent:
+                    await query.edit_message_text(
+                        "⚡ <b>Enviado em modo rápido</b>\n\n"
+                        "O Telegram buscou o arquivo direto da origem, sem reupload pela Railway."
+                    )
+                    return
+            except Exception:
+                pass
+
         job = jobs.create(selected)
         jobs.launch(job.id)
         await query.edit_message_text(progress_text(job))
