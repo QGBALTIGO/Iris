@@ -30,3 +30,18 @@ def test_blob_and_data_urls_are_ignored():
     html = '<video src="blob:https://example.com/x"></video><img src="data:image/png;base64,xxx">'
     _, resources = extract_html_resources(html, "https://example.com")
     assert resources == []
+
+
+def test_embed_meta_is_not_counted_as_downloadable_video():
+    html = """
+    <html><head>
+      <meta property="og:video" content="/embed/23405">
+      <meta property="og:video:url" content="/movie.mp4">
+    </head></html>
+    """
+    _, resources = extract_html_resources(html, "https://example.com/page")
+    embed = next(r for r in resources if r.url.endswith("/embed/23405"))
+    movie = next(r for r in resources if r.url.endswith("/movie.mp4"))
+    assert embed.type == ResourceType.OTHER
+    assert embed.metadata["navigation_only"] is True
+    assert movie.type == ResourceType.VIDEO
