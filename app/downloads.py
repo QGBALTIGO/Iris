@@ -139,8 +139,8 @@ class DownloadEngine:
         cmd = [
             "aria2c",
             "--continue=true",
-            "--max-connection-per-server=16",
-            "--split=16",
+            "--max-connection-per-server=12",
+            "--split=12",
             "--min-split-size=1M",
             "--file-allocation=none",
             "--disk-cache=64M",
