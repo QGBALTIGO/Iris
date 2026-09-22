@@ -21,6 +21,26 @@ async def run_one_shot(bot) -> dict:
     delivery = DeliveryManager()
 
     result = await analyzer.analyze(settings.one_shot_url, deep=True)
+    candidates = [
+        {
+            "url": r.url,
+            "type": r.type.value,
+            "source": r.source,
+            "mime": r.mime_type,
+            "hls_segment": bool(r.metadata.get("hls_segment")),
+            "engine": r.metadata.get("engine"),
+        }
+        for r in result.resources
+        if r.type.value in {"video", "playlist", "stream"}
+    ]
+    print(
+        "IRIS_ONE_SHOT_CANDIDATES "
+        + json.dumps(
+            {"warnings": result.warnings, "candidates": candidates[:60]},
+            ensure_ascii=False,
+        ),
+        flush=True,
+    )
     resource, path, generated, info, rejected = await download_first_valid_video(
         result.resources
     )
