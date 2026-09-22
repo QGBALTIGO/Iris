@@ -130,7 +130,7 @@ def _analysis_text(result: AnalyzeResult, elapsed: float | None = None) -> str:
     if stats["audio"]:
         lines.append(f"🎵 Áudios: <b>{stats['audio']}</b>")
     if stats["chapter_pages"]:
-        protected = any(r.metadata.get("viewer_protected") for r in chapter_pages(result))
+        protected = any(r.metadata.get("raw_downloadable") is False for r in chapter_pages(result))
         lock = " 🔒" if protected else ""
         lines.append(f"📖 Páginas do capítulo: <b>{stats['chapter_pages']}</b>{lock}")
     if stats["images"]:
@@ -459,7 +459,7 @@ async def run_bot() -> None:
         page = max(0, min(page, max(0, (len(resources) - 1) // per_page)))
         start = page * per_page
         subset = resources[start : start + per_page]
-        protected_pages = bucket == "p" and any(r.metadata.get("viewer_protected") for r in resources)
+        protected_pages = bucket == "p" and any(r.metadata.get("raw_downloadable") is False for r in resources)
 
         lines = [
             f"{_BUCKET_NAMES.get(bucket, '📦 Recursos')}",
@@ -629,7 +629,7 @@ async def run_bot() -> None:
         selected = [
             resource
             for resource in selected
-            if not resource.drm and not resource.metadata.get("viewer_protected")
+            if not resource.drm and not resource.metadata.get("raw_downloadable") is False
         ]
         if not selected:
             await query.edit_message_text(
