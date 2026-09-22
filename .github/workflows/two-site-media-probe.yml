@@ -1,0 +1,95 @@
+name: Two-site media probe
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/two-site-media-probe.yml"
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      - run: python -m playwright install --with-deps chromium
+      - name: Probe and download both pages
+        env:
+          IRIS_DOWNLOADS_DIR: /tmp/iris-probe
+          IRIS_MAX_BROWSER_REQUESTS: "1800"
+        run: |
+          python - <<'PY'
+          import asyncio, json, os, subprocess, time
+          from pathlib import Path
+          from app.analyzer import Analyzer
+          from app.downloads import DownloadEngine
+          from app.models import ResourceType
+
+          URLS = {
+            "tubepussy": "https://tubepussy.org/ruiva-isabel-dando-a-bucetinha-e-levando-na-cara/#forward",
+            "xvideosputaria": "https://xvideosputaria.com/anao-gabriela-gadotti-mini-gabys-boquetando-com-leite-na-boca/#forward",
+          }
+
+          def probe_file(path):
+            p = subprocess.run(
+              ["ffprobe","-v","error","-print_format","json","-show_format","-show_streams",str(path)],
+              capture_output=True,text=True
+            )
+            if p.returncode:
+              return {"ok":False,"stderr":p.stderr[-500:]}
+            data=json.loads(p.stdout or "{}")
+            fmt=data.get("format") or {}
+            vs=next((s for s in data.get("streams",[]) if s.get("codec_type")=="video"),{})
+            aus=next((s for s in data.get("streams",[]) if s.get("codec_type")=="audio"),{})
+            return {
+              "ok":True,
+              "format":fmt.get("format_name"),
+              "duration":fmt.get("duration"),
+              "size":fmt.get("size"),
+              "video_codec":vs.get("codec_name"),
+              "pix_fmt":vs.get("pix_fmt"),
+              "width":vs.get("width"),
+              "height":vs.get("height"),
+              "audio_codec":aus.get("codec_name"),
+            }
+
+          async def main():
+            Path("/tmp/iris-probe").mkdir(parents=True,exist_ok=True)
+            for name,url in URLS.items():
+              t=time.monotonic()
+              result=await Analyzer().analyze(url,deep=True)
+              media=[r for r in result.resources if r.type in {ResourceType.VIDEO,ResourceType.PLAYLIST,ResourceType.STREAM} and not r.drm]
+              print("PROBE_ANALYZE "+json.dumps({
+                "name":name,"title":result.title,"seconds":round(time.monotonic()-t,3),
+                "warnings":result.warnings,"count":len(media),
+                "media":[{
+                  "url":r.url,"type":r.type.value,"source":r.source,"mime":r.mime_type,
+                  "title":r.title,"quality":r.quality,"variants":len(r.variants),
+                  "headers":sorted(k.lower() for k in r.headers.keys()),
+                  "engine":r.metadata.get("engine")
+                } for r in media[:10]]
+              },ensure_ascii=False))
+              if not media:
+                continue
+              candidates=sorted(media,key=lambda r:(0 if r.type==ResourceType.VIDEO else 1,0 if r.source.startswith("browser:network") else 1,-(r.height or 0)))
+              r=candidates[0]
+              t=time.monotonic()
+              try:
+                path=await DownloadEngine().download(r)
+                print("PROBE_DOWNLOAD "+json.dumps({
+                  "name":name,"seconds":round(time.monotonic()-t,3),"path":str(path),
+                  "suffix":path.suffix,"bytes":path.stat().st_size,"ffprobe":probe_file(path)
+                },ensure_ascii=False))
+              except Exception as e:
+                print("PROBE_DOWNLOAD "+json.dumps({
+                  "name":name,"ok":False,"seconds":round(time.monotonic()-t,3),
+                  "error":f"{type(e).__name__}: {str(e)[:700]}"
+                },ensure_ascii=False))
+
+          asyncio.run(main())
+          PY
