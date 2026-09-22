@@ -13,6 +13,7 @@ from app.benchmark import run_admin_benchmark
 from app.content import chapter_pages, content_images, content_summary
 from app.delivery import DeliveryManager, build_pdf, build_zip, human_bytes, parse_relay_caption
 from app.jobs import JobStore
+from app.large_video_smoke import run_large_video_smoke
 from app.models import AnalyzeResult, DownloadJob, JobState, MediaResource, ResourceType
 from app.selftest import run_telegram_selftest
 from app.settings import settings
@@ -934,6 +935,20 @@ async def run_bot() -> None:
             except Exception as exc:
                 print(f"IRIS_VIDEO_SMOKE_ERROR {type(exc).__name__}: {exc}", flush=True)
         asyncio.create_task(_video_smoke_once(), name="iris-native-video-smoke")
+
+    if settings.run_large_video_smoke and settings.admin_id:
+        async def _large_video_smoke_once():
+            await asyncio.sleep(4)
+            try:
+                result = await run_large_video_smoke(application.bot, settings.admin_id)
+                print(
+                    "IRIS_LARGE_VIDEO_SMOKE "
+                    + " ".join(f"{key}={value}" for key, value in result.items()),
+                    flush=True,
+                )
+            except Exception as exc:
+                print(f"IRIS_LARGE_VIDEO_SMOKE_ERROR {type(exc).__name__}: {exc}", flush=True)
+        asyncio.create_task(_large_video_smoke_once(), name="iris-large-video-smoke")
 
     try:
         await asyncio.Event().wait()
