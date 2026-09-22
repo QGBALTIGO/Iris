@@ -117,7 +117,7 @@ jobs:
                   pages = chapter_pages(manga)
                   emit("assert", "mangaplus-pages", ok=len(pages)==21,
                        count=len(pages),
-                       protected=sum(bool(r.metadata.get("viewer_protected")) for r in pages))
+                       protected=sum(r.metadata.get("raw_downloadable") is False for r in pages))
               if crunchy:
                   drm = [r for r in crunchy.resources if r.drm]
                   emit("assert", "crunchyroll-drm", ok=bool(drm), count=len(drm))
