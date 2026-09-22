@@ -46,6 +46,7 @@ class Settings:
     run_benchmark: bool = _bool("IRIS_RUN_BENCHMARK", False)
     run_video_smoke: bool = _bool("IRIS_RUN_VIDEO_SMOKE", False)
     run_large_video_smoke: bool = _bool("IRIS_RUN_LARGE_VIDEO_SMOKE", False)
+    run_source_speed_smoke: bool = _bool("IRIS_RUN_SOURCE_SPEED_SMOKE", False)
 
 
 settings = Settings()
