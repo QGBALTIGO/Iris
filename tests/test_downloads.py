@@ -1,8 +1,13 @@
 from pathlib import Path
 from unittest.mock import patch
 
-from app.downloads import DownloadEngine, safe_filename
+import httpx
+import pytest
+
+from app.downloads import DownloadEngine, _run, safe_filename
 from app.models import MediaResource, ResourceType
+from app.security import UnsafeUrlError
+from app.settings import Settings
 
 
 def test_safe_filename_strips_dangerous_chars():
@@ -24,11 +29,6 @@ def test_playlist_prefers_stream_engine():
     resource = MediaResource(url="https://example.com/master.m3u8", type=ResourceType.PLAYLIST)
     with patch("shutil.which", side_effect=lambda x: "/usr/bin/yt-dlp" if x == "yt-dlp" else None):
         assert engine.choose_engine(resource) == "yt-dlp"
-
-import httpx
-import pytest
-from app.security import UnsafeUrlError
-from app.settings import Settings
 
 
 @pytest.mark.asyncio
@@ -53,6 +53,33 @@ async def test_direct_download_streams_and_reports_progress(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_invalid_image_payload_is_rejected(tmp_path):
+    payload = b"not-a-real-jpeg" * 100
+
+    async def handler(request):
+        return httpx.Response(200, headers={"content-length": str(len(payload)), "content-type": "image/jpeg"}, content=payload)
+
+    engine = DownloadEngine(Settings(downloads_dir=tmp_path), transport=httpx.MockTransport(handler))
+    resource = MediaResource(url="https://93.184.216.34/page.jpg", type=ResourceType.IMAGE)
+    with pytest.raises(Exception, match="obfuscados"):
+        await engine.download(resource)
+    assert not (tmp_path / "page.jpg").exists()
+
+
+@pytest.mark.asyncio
+async def test_valid_jpeg_signature_is_accepted(tmp_path):
+    payload = b"\xff\xd8\xff" + b"x" * 100
+
+    async def handler(request):
+        return httpx.Response(200, headers={"content-length": str(len(payload)), "content-type": "image/jpeg"}, content=payload)
+
+    engine = DownloadEngine(Settings(downloads_dir=tmp_path), transport=httpx.MockTransport(handler))
+    resource = MediaResource(url="https://93.184.216.34/page.jpg", type=ResourceType.IMAGE)
+    path = await engine.download(resource)
+    assert path.read_bytes().startswith(b"\xff\xd8\xff")
+
+
+@pytest.mark.asyncio
 async def test_redirect_to_private_network_is_blocked(tmp_path):
     async def handler(request):
         return httpx.Response(302, headers={"location": "http://127.0.0.1/secret"})
@@ -74,8 +101,6 @@ async def test_declared_oversize_download_is_rejected(tmp_path):
     with patch("shutil.which", return_value=None):
         with pytest.raises(Exception, match="excede o limite"):
             await engine.download(resource)
-
-from app.downloads import _run
 
 
 @pytest.mark.asyncio
