@@ -17,6 +17,7 @@ from app.large_video_smoke import run_large_video_smoke
 from app.models import AnalyzeResult, DownloadJob, JobState, MediaResource, ResourceType
 from app.selftest import run_telegram_selftest
 from app.settings import settings
+from app.source_speed_smoke import run_source_speed_smoke
 from app.userbot import userbot
 from app.video_smoke import run_native_video_smoke
 
@@ -1003,6 +1004,17 @@ async def run_bot() -> None:
             except Exception as exc:
                 print(f"IRIS_LARGE_VIDEO_SMOKE_ERROR {type(exc).__name__}: {exc}", flush=True)
         asyncio.create_task(_large_video_smoke_once(), name="iris-large-video-smoke")
+
+    if settings.run_source_speed_smoke:
+        async def _source_speed_once():
+            await asyncio.sleep(4)
+            try:
+                rows = await run_source_speed_smoke()
+                for row in rows:
+                    print("IRIS_SOURCE_SPEED " + row, flush=True)
+            except Exception as exc:
+                print(f"IRIS_SOURCE_SPEED_ERROR {type(exc).__name__}: {exc}", flush=True)
+        asyncio.create_task(_source_speed_once(), name="iris-source-speed-smoke")
 
     try:
         await asyncio.Event().wait()
