@@ -505,6 +505,10 @@ class SiteQueueManager:
             last_error=None,
             sent_at=time.time(),
         )
+        print(
+            f"IRIS_QUEUE_SENT item={item_id} message={message_id}",
+            flush=True,
+        )
 
     async def wait_delivery(self, item_id: int, timeout: float = 180.0) -> str:
         started = time.monotonic()
@@ -576,6 +580,10 @@ class SiteQueueManager:
                 return
 
             try:
+                print(
+                    f"IRIS_QUEUE_PROCESS item={item.id} attempt={item.attempts} url={item.url}",
+                    flush=True,
+                )
                 await self._process_item(bot, target_chat_id, item)
             except asyncio.CancelledError:
                 self._update_item(
@@ -589,6 +597,10 @@ class SiteQueueManager:
                     item.id,
                     "failed",
                     last_error=f"{type(exc).__name__}: {str(exc)[:450]}",
+                )
+                print(
+                    f"IRIS_QUEUE_FAILED item={item.id} error={type(exc).__name__}:{str(exc)[:180]}",
+                    flush=True,
                 )
 
             await asyncio.sleep(1.5)
@@ -621,13 +633,16 @@ class SiteQueueManager:
         if not local_mode and media.type == ResourceType.VIDEO and not media.drm:
             try:
                 self._update_item(item.id, "awaiting_delivery")
-                await self.delivery.send_resource_to_chat(
-                    bot,
-                    target_chat_id,
-                    media,
-                    caption=caption,
-                    queue_item_id=item.id,
-                    as_video=True,
+                await asyncio.wait_for(
+                    self.delivery.send_resource_to_chat(
+                        bot,
+                        target_chat_id,
+                        media,
+                        caption=caption,
+                        queue_item_id=item.id,
+                        as_video=True,
+                    ),
+                    timeout=45.0,
                 )
                 result_status = await self.wait_delivery(item.id)
                 if result_status == "sent":
