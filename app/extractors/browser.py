@@ -36,6 +36,7 @@ async def probe_browser(
     timeout_ms: int = 18_000,
     max_requests: int = 1200,
     interaction_rounds: int = 8,
+    disable_gpu: bool = False,
 ) -> list[MediaResource]:
     try:
         from playwright.async_api import async_playwright
@@ -46,13 +47,26 @@ async def probe_browser(
     lock = asyncio.Lock()
 
     async with async_playwright() as p:
+        launch_args: list[str] = []
+        if disable_gpu:
+            launch_args.extend([
+                "--disable-gpu",
+                "--disable-gpu-compositing",
+                "--disable-accelerated-2d-canvas",
+                "--disable-accelerated-video-decode",
+                "--disable-accelerated-video-encode",
+            ])
         try:
-            browser = await p.chromium.launch(headless=True)
+            browser = await p.chromium.launch(headless=True, args=launch_args)
         except Exception:
             executable = Path(p.chromium.executable_path)
             if not executable.exists():
                 raise
-            browser = await p.chromium.launch(headless=True, executable_path=str(executable))
+            browser = await p.chromium.launch(
+                headless=True,
+                executable_path=str(executable),
+                args=launch_args,
+            )
         context = await browser.new_context(
             ignore_https_errors=False,
             user_agent=_BROWSER_UA,
