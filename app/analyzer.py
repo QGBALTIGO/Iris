@@ -80,6 +80,22 @@ class Analyzer:
                 warnings.append(f"Navegador indisponível: {type(exc).__name__}")
 
         resources = [r for r in deduplicate(resources) if not r.metadata.get("navigation_only")]
+        if title:
+            for resource in resources:
+                resource.metadata.setdefault("page_title", title)
+                resource.metadata.setdefault("page_url", final_url)
+                if (
+                    not resource.title
+                    and resource.type in {
+                        ResourceType.VIDEO,
+                        ResourceType.AUDIO,
+                        ResourceType.PLAYLIST,
+                        ResourceType.STREAM,
+                        ResourceType.DOCUMENT,
+                        ResourceType.ARCHIVE,
+                    }
+                ):
+                    resource.title = title
         annotate_content_roles(resources)
         await self._annotate_chapter_exportability(resources, warnings)
         await self._inspect_manifests(resources, warnings)
