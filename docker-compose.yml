@@ -1,0 +1,20 @@
+services:
+  iris-api:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - iris-downloads:/app/downloads
+    ports:
+      - "8000:8000"
+
+  iris-bot:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    command: ["python", "-m", "app.main", "bot"]
+    volumes:
+      - iris-downloads:/app/downloads
+
+volumes:
+  iris-downloads:
