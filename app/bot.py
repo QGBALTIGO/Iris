@@ -11,13 +11,14 @@ from urllib.parse import unquote, urlsplit
 from app.analyzer import Analyzer
 from app.benchmark import run_admin_benchmark
 from app.content import chapter_pages, content_images, content_summary
-from app.delivery import DeliveryManager, build_pdf, build_zip, human_bytes, parse_relay_caption
+from app.delivery import DeliveryManager, build_pdf, build_zip, human_bytes, parse_relay_payload
 from app.jobs import JobStore
 from app.large_video_smoke import run_large_video_smoke
 from app.models import AnalyzeResult, DownloadJob, JobState, MediaResource, ResourceType
 from app.mtproto_speed_smoke import run_mtproto_speed_smoke
 from app.selftest import run_telegram_selftest
 from app.settings import settings
+from app.site_queue import site_queue
 from app.source_speed_smoke import run_source_speed_smoke
 from app.userbot import userbot
 from app.video_smoke import run_native_video_smoke
@@ -129,6 +130,32 @@ def delivery_caption(resource: MediaResource | None, *, as_video: bool = False) 
     if quality:
         lines.append(f"📺 <b>{_safe(str(quality), 30)}</b>")
     lines.extend(["", "✨ <i>IRIS</i>"])
+    return "\n".join(lines)
+
+
+def queue_status_text() -> str:
+    status = site_queue.status()
+    counts = status.get("counts") or {}
+    pending = int(counts.get("pending", 0)) + int(counts.get("retry_local", 0))
+    sent = int(counts.get("sent", 0))
+    failed = int(counts.get("failed", 0))
+    processing = int(counts.get("processing", 0)) + int(counts.get("awaiting_delivery", 0))
+    total = int(status.get("discovered_total") or 0)
+    state = "⏸️ Pausada" if status.get("paused") else ("▶️ Rodando" if status.get("running") else "⏹️ Parada")
+    lines = [
+        "🎞️ <b>Fila do site</b>",
+        "",
+        f"Estado: <b>{state}</b>",
+        f"📚 Descobertos: <b>{total}</b>",
+        f"✅ Enviados: <b>{sent}</b>",
+        f"⏳ Pendentes: <b>{pending}</b>",
+        f"⚙️ Em processamento: <b>{processing}</b>",
+        f"❌ Falhas: <b>{failed}</b>",
+    ]
+    current = status.get("current")
+    if current:
+        title = current.get("title") or current.get("url") or "item"
+        lines.extend(["", f"Agora: <i>{_safe(str(title), 110)}</i>"])
     return "\n".join(lines)
 
 
@@ -350,6 +377,87 @@ async def run_bot() -> None:
             f"🧹 <b>Limpeza concluída</b>\n\n{removed} arquivo(s) removido(s)."
         )
 
+    async def admin_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not _is_admin(update.effective_user.id if update.effective_user else None):
+            return
+        action = (context.args[0].lower() if context.args else "status")
+        message = update.effective_message
+        chat_id = update.effective_chat.id
+
+        if action in {"status", "estado"}:
+            await message.reply_text(queue_status_text())
+            return
+
+        if action in {"iniciar", "start"}:
+            wait = await message.reply_text(
+                "🔎 <b>Montando a fila…</b>\n\nBuscando todas as postagens do site."
+            )
+            try:
+                stats = await site_queue.discover()
+                await site_queue.start(application.bot, chat_id, discover=False)
+                await wait.edit_text(
+                    "▶️ <b>Fila iniciada</b>\n\n"
+                    f"📚 Encontrados: <b>{stats['found']}</b>\n"
+                    f"➕ Novos: <b>{stats['added']}</b>\n"
+                    f"🎞️ Total registrado: <b>{stats['total']}</b>\n\n"
+                    "Vou enviar um por um. O progresso fica salvo em /data."
+                )
+            except Exception as exc:
+                await wait.edit_text(
+                    "⚠️ <b>Não consegui iniciar a fila.</b>\n\n"
+                    f"<code>{_safe(type(exc).__name__ + ': ' + str(exc), 250)}</code>"
+                )
+            return
+
+        if action in {"continuar", "retomar", "resume"}:
+            try:
+                await site_queue.resume(application.bot, chat_id)
+                await message.reply_text(
+                    "▶️ <b>Fila retomada</b>\n\nContinuando exatamente dos itens ainda pendentes."
+                )
+            except Exception as exc:
+                await message.reply_text(
+                    f"⚠️ <b>Falha ao retomar.</b>\n\n<code>{_safe(str(exc), 220)}</code>"
+                )
+            return
+
+        if action in {"pausar", "pause"}:
+            site_queue.pause()
+            await message.reply_text("⏸️ <b>Fila pausada.</b>\n\nO progresso ficou salvo.")
+            return
+
+        if action in {"atualizar", "refresh"}:
+            wait = await message.reply_text("🔄 <b>Atualizando catálogo…</b>")
+            try:
+                stats = await site_queue.discover()
+                await wait.edit_text(
+                    "✅ <b>Catálogo atualizado</b>\n\n"
+                    f"📚 Encontrados: <b>{stats['found']}</b>\n"
+                    f"➕ Novos: <b>{stats['added']}</b>\n"
+                    f"🎞️ Total: <b>{stats['total']}</b>"
+                )
+            except Exception as exc:
+                await wait.edit_text(f"⚠️ <code>{_safe(str(exc), 250)}</code>")
+            return
+
+        if action in {"repetir", "falhas", "retry"}:
+            count = site_queue.retry_failures()
+            await site_queue.resume(application.bot, chat_id)
+            await message.reply_text(
+                f"🔁 <b>Falhas recolocadas na fila</b>\n\nItens: <b>{count}</b>"
+            )
+            return
+
+        await message.reply_text(
+            "🎞️ <b>Fila do site</b>\n\n"
+            "<code>/fila iniciar</code> — descobrir e começar\n"
+            "<code>/fila continuar</code> — retomar de onde parou\n"
+            "<code>/fila pausar</code> — pausar\n"
+            "<code>/fila status</code> — ver progresso\n"
+            "<code>/fila atualizar</code> — buscar novos posts\n"
+            "<code>/fila repetir</code> — tentar falhas novamente"
+        )
+
     async def handle_auth_text(update: Update) -> bool:
         global _AUTH_STAGE
         if not _AUTH_STAGE or not _is_admin(update.effective_user.id if update.effective_user else None):
@@ -444,15 +552,12 @@ async def run_bot() -> None:
         if uid and userbot.configured and await userbot.is_authorized():
             try:
                 if uid == await userbot.user_id():
-                    relay = parse_relay_caption(message.caption)
+                    relay = parse_relay_payload(message.caption)
                     if relay:
-                        target_chat_id, clean_caption = relay
-                        await context.bot.copy_message(
-                            chat_id=target_chat_id,
-                            from_chat_id=message.chat_id,
-                            message_id=message.message_id,
-                            caption=clean_caption or None,
-                        )
+                        target_chat_id = int(relay["chat_id"])
+                        clean_caption = str(relay.get("caption") or "")
+                        queue_item_id = relay.get("queue_item_id")
+                        expected_kind = relay.get("expected_kind")
                         media_kind = (
                             "video" if message.video else
                             "animation" if message.animation else
@@ -462,6 +567,38 @@ async def run_bot() -> None:
                             "document" if message.document else
                             "other"
                         )
+
+                        if queue_item_id is not None and expected_kind and media_kind != expected_kind:
+                            site_queue.mark_relay_result(
+                                int(queue_item_id),
+                                media_kind=media_kind,
+                                error=f"Esperado {expected_kind}, recebido {media_kind}",
+                            )
+                            try:
+                                await context.bot.delete_message(
+                                    chat_id=message.chat_id,
+                                    message_id=message.message_id,
+                                )
+                            except Exception:
+                                pass
+                            print(
+                                f"IRIS_QUEUE_RETRY item={queue_item_id} expected={expected_kind} got={media_kind}",
+                                flush=True,
+                            )
+                            return
+
+                        copied = await context.bot.copy_message(
+                            chat_id=target_chat_id,
+                            from_chat_id=message.chat_id,
+                            message_id=message.message_id,
+                            caption=clean_caption or None,
+                        )
+                        if queue_item_id is not None:
+                            site_queue.mark_relay_result(
+                                int(queue_item_id),
+                                media_kind=media_kind,
+                                message_id=getattr(copied, "message_id", None),
+                            )
                         media_obj = (
                             message.video
                             or message.animation
@@ -491,6 +628,16 @@ async def run_bot() -> None:
                             pass
                     return
             except Exception as exc:
+                try:
+                    payload = parse_relay_payload(message.caption)
+                    if payload and payload.get("queue_item_id") is not None:
+                        site_queue.mark_relay_result(
+                            int(payload["queue_item_id"]),
+                            media_kind="error",
+                            error=f"{type(exc).__name__}: {str(exc)[:220]}",
+                        )
+                except Exception:
+                    pass
                 print(f"IRIS_RELAY_ERROR {type(exc).__name__}: {exc}", flush=True)
                 return
 
@@ -909,6 +1056,8 @@ async def run_bot() -> None:
     application.add_handler(CommandHandler("conta06", admin_userbot))
     application.add_handler(CommandHandler("diagnostico", admin_diag))
     application.add_handler(CommandHandler("limpar", admin_clean))
+    application.add_handler(CommandHandler("fila", admin_queue))
+    application.add_handler(CommandHandler("retomar", admin_queue))
     application.add_handler(CallbackQueryHandler(callbacks))
 
     media_filter = (
@@ -943,6 +1092,8 @@ async def run_bot() -> None:
                 BotCommand("conta06", "Conectar a Conta 06"),
                 BotCommand("diagnostico", "Testar entregas"),
                 BotCommand("limpar", "Limpar temporários"),
+                BotCommand("fila", "Fila persistente do site"),
+                BotCommand("retomar", "Continuar fila de onde parou"),
             ],
             scope=BotCommandScopeChat(chat_id=settings.admin_id),
         )
@@ -979,6 +1130,16 @@ async def run_bot() -> None:
                 "⚠️ <b>Conta 06</b>\n\n"
                 f"Não consegui iniciar o login automaticamente: <code>{_safe(str(exc), 160)}</code>",
             )
+
+    try:
+        resumed = await site_queue.maybe_resume(application.bot)
+        if resumed and settings.admin_id:
+            await application.bot.send_message(
+                settings.admin_id,
+                "♻️ <b>Fila retomada automaticamente</b>\n\nContinuando do ponto salvo antes do reinício.",
+            )
+    except Exception as exc:
+        print(f"IRIS_QUEUE_RESUME_ERROR {type(exc).__name__}: {exc}", flush=True)
 
     if settings.run_benchmark and settings.admin_id:
         async def _benchmark_once():
@@ -1052,6 +1213,12 @@ async def run_bot() -> None:
     try:
         await asyncio.Event().wait()
     finally:
+        if site_queue.task and not site_queue.task.done():
+            site_queue.task.cancel()
+            try:
+                await site_queue.task
+            except asyncio.CancelledError:
+                pass
         await userbot.close()
         await application.updater.stop()
         await application.stop()
