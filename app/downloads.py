@@ -78,6 +78,8 @@ class DownloadEngine:
             raise DownloadRejected("Conteúdo protegido por DRM não é baixado pelo Iris")
         engine = self.choose_engine(resource)
         target = self.config.downloads_dir / (filename or safe_filename(resource))
+        if resource.type == ResourceType.PLAYLIST and target.suffix.lower() in {".m3u8", ".m3u", ".mpd", ".ism", ".isml"}:
+            target = target.with_suffix(".mp4")
         target.parent.mkdir(parents=True, exist_ok=True)
 
         if engine == "aria2":
@@ -166,7 +168,16 @@ class DownloadEngine:
             for key, value in _replay_headers(resource.headers).items():
                 cmd.extend(["--header", f"{key}: {value}"])
         else:
-            cmd = ["yt-dlp", "--no-part", "--no-playlist", "--newline", "-o", str(target)]
+            cmd = [
+                "yt-dlp",
+                "--no-part",
+                "--no-playlist",
+                "--newline",
+                "--concurrent-fragments", "8",
+                "--merge-output-format", "mp4",
+                "--remux-video", "mp4",
+                "-o", str(target),
+            ]
             for key, value in _replay_headers(resource.headers).items():
                 cmd.extend(["--add-header", f"{key}:{value}"])
             cmd.append(resource.url)
