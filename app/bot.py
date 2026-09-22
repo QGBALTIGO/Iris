@@ -15,6 +15,7 @@ from app.delivery import DeliveryManager, build_pdf, build_zip, human_bytes, par
 from app.jobs import JobStore
 from app.large_video_smoke import run_large_video_smoke
 from app.models import AnalyzeResult, DownloadJob, JobState, MediaResource, ResourceType
+from app.one_shot import run_one_shot
 from app.mtproto_speed_smoke import run_mtproto_speed_smoke
 from app.selftest import run_telegram_selftest
 from app.settings import settings
@@ -1180,6 +1181,25 @@ async def run_bot() -> None:
                 )
     except Exception as exc:
         print(f"IRIS_QUEUE_RESUME_ERROR {type(exc).__name__}: {exc}", flush=True)
+
+    if settings.one_shot_url and settings.admin_id:
+        async def _one_shot_once():
+            await asyncio.sleep(3)
+            try:
+                await application.bot.send_message(
+                    settings.admin_id,
+                    "🧪 <b>Teste solicitado</b>\n\n"
+                    "Validando os candidatos de vídeo e descartando falsos MP4 antes do envio…",
+                )
+                await run_one_shot(application.bot)
+            except Exception as exc:
+                print(f"IRIS_ONE_SHOT_ERROR {type(exc).__name__}: {exc}", flush=True)
+                await application.bot.send_message(
+                    settings.admin_id,
+                    "⚠️ <b>Teste falhou</b>\n\n"
+                    f"<code>{_safe(str(exc), 300)}</code>",
+                )
+        asyncio.create_task(_one_shot_once(), name="iris-one-shot")
 
     if settings.run_benchmark and settings.admin_id:
         async def _benchmark_once():
