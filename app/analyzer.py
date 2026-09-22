@@ -98,7 +98,7 @@ class Analyzer:
     async def _deep_probe(self, final_url: str, resources: list[MediaResource], warnings: list[str]) -> None:
         tasks: list[tuple[str, asyncio.Task]] = []
         host = urlsplit(final_url).netloc.lower()
-        rounds = 64 if "mangaplus.shueisha.co.jp" in host else 18
+        rounds = 42 if "mangaplus.shueisha.co.jp" in host else 18
 
         if self.config.browser_enabled:
             tasks.append((
