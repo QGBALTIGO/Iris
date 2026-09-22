@@ -1,0 +1,74 @@
+name: Crunchyroll GPU comparison
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/crunchyroll-gpu-comparison.yml"
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      - run: python -m playwright install --with-deps chromium
+      - name: Compare GPU enabled vs disabled
+        env:
+          IRIS_DOWNLOADS_DIR: /tmp/iris-crunchy
+          IRIS_MAX_BROWSER_REQUESTS: "2500"
+        run: |
+          python - <<'PY'
+          import asyncio, json, time
+          from app.analyzer import Analyzer
+          from app.settings import Settings
+          from app.models import ResourceType
+
+          URL="https://www.crunchyroll.com/pt-br/watch/GMKUX478J/jobless-reincarnation"
+
+          async def run(disable_gpu):
+              cfg = Settings(
+                  browser_enabled=True,
+                  browser_disable_gpu=disable_gpu,
+                  ytdlp_enabled=True,
+                  max_browser_requests=2500,
+                  request_timeout=25,
+              )
+              started=time.monotonic()
+              result=await Analyzer(config=cfg).analyze(URL,deep=True)
+              media=[
+                  r for r in result.resources
+                  if r.type in {ResourceType.VIDEO,ResourceType.PLAYLIST,ResourceType.STREAM}
+              ]
+              return {
+                  "disable_gpu":disable_gpu,
+                  "seconds":round(time.monotonic()-started,3),
+                  "title":result.title,
+                  "warnings":result.warnings,
+                  "counts":result.counts,
+                  "media":[{
+                      "url":r.url,
+                      "type":r.type.value,
+                      "source":r.source,
+                      "mime":r.mime_type,
+                      "drm":r.drm,
+                      "encrypted":r.encrypted,
+                      "variants":len(r.variants),
+                      "status":r.metadata.get("status"),
+                  } for r in media[:30]],
+                  "drm_count":sum(bool(r.drm) for r in media),
+                  "playlist_count":sum(r.type==ResourceType.PLAYLIST for r in media),
+              }
+
+          async def main():
+              normal=await run(False)
+              disabled=await run(True)
+              print("CRUNCHY_GPU "+json.dumps({"normal":normal,"disabled":disabled},ensure_ascii=False))
+
+          asyncio.run(main())
+          PY
