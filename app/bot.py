@@ -439,10 +439,14 @@ async def run_bot() -> None:
                         duration = getattr(media_obj, "duration", None) if media_obj else None
                         width = getattr(media_obj, "width", None) if media_obj else None
                         height = getattr(media_obj, "height", None) if media_obj else None
+                        has_thumb = bool(
+                            getattr(media_obj, "thumbnail", None)
+                            or getattr(media_obj, "cover", None)
+                        ) if media_obj else False
                         print(
                             f"IRIS_RELAY_OK source={message.chat_id} message={message.message_id} "
                             f"target={target_chat_id} kind={media_kind} duration={duration} "
-                            f"width={width} height={height}",
+                            f"width={width} height={height} thumb={has_thumb}",
                             flush=True,
                         )
                         try:
