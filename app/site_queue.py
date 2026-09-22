@@ -311,6 +311,7 @@ class SiteQueueManager:
             "paused": bool(state["paused"]) if state else True,
             "target_chat_id": state["target_chat_id"] if state else None,
             "discovered_total": state["discovered_total"] if state else 0,
+            "last_started_at": state["last_started_at"] if state else None,
             "counts": counts,
             "current": dict(current) if current else None,
         }
@@ -580,20 +581,27 @@ class SiteQueueManager:
         local_mode = item.status == "retry_local" or item.attempts > 1
 
         if not local_mode and media.type == ResourceType.VIDEO and not media.drm:
-            self._update_item(item.id, "awaiting_delivery")
-            await self.delivery.send_resource_to_chat(
-                bot,
-                target_chat_id,
-                media,
-                caption=caption,
-                queue_item_id=item.id,
-                as_video=True,
-            )
-            result_status = await self.wait_delivery(item.id)
-            if result_status == "sent":
-                return
-            if result_status != "retry_local":
-                return
+            try:
+                self._update_item(item.id, "awaiting_delivery")
+                await self.delivery.send_resource_to_chat(
+                    bot,
+                    target_chat_id,
+                    media,
+                    caption=caption,
+                    queue_item_id=item.id,
+                    as_video=True,
+                )
+                result_status = await self.wait_delivery(item.id)
+                if result_status == "sent":
+                    return
+                if result_status != "retry_local":
+                    return
+            except Exception as exc:
+                self._update_item(
+                    item.id,
+                    "retry_local",
+                    last_error=f"Entrega direta falhou: {type(exc).__name__}: {str(exc)[:220]}",
+                )
 
         await self._send_local_native(bot, target_chat_id, item, media, caption)
 
