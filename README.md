@@ -1,58 +1,66 @@
 # Iris
 
-Iris é um analisador universal de páginas e gerenciador de downloads para Telegram/API. A ideia é receber uma URL, detectar vídeos, streams, áudios, imagens, documentos e outros arquivos, mostrar o que foi encontrado e permitir downloads individuais ou em lote.
+Iris é um analisador de páginas e gerenciador de mídia para Telegram/API. Ele recebe URLs, detecta vídeos, streams, áudios, imagens, páginas de capítulos e arquivos, organiza o resultado e permite downloads individuais ou em lote.
 
-## O que já existe
+## Recursos atuais
 
-- análise rápida de HTML;
-- OpenGraph, JSON-LD, `video`, `audio`, `source`, `srcset` e links diretos;
-- detecção de URLs de mídia embutidas em scripts;
-- HLS/M3U8 com variantes de qualidade;
-- DASH/MPD com representações;
-- detecção e bloqueio de DRM;
-- análise profunda opcional com yt-dlp e Playwright/network sniffing;
-- deduplicação de recursos;
-- API FastAPI;
-- bot Telegram preparado para token/admin;
-- download em lote e acompanhamento por jobs;
-- aria2 para downloads diretos quando disponível;
-- yt-dlp/N_m3u8DL-RE como motores de streams;
-- fallback HTTPX;
-- proteção SSRF e limites de tamanho;
-- Docker e GitHub Actions.
+- análise rápida de HTML e metadados;
+- análise profunda paralela com Playwright + yt-dlp;
+- network sniffing para mídia carregada por JavaScript;
+- HLS/M3U8 e DASH/MPD com variantes de qualidade;
+- detecção de DRM e conteúdo renderizado/obfuscado;
+- separação entre páginas de capítulo, imagens úteis e assets de interface;
+- downloads paralelos com aria2/HTTPX e fallback automático;
+- jobs com progresso, velocidade e falhas parciais;
+- capítulos em PDF ou ZIP quando as imagens brutas são válidas;
+- vídeos enviados como vídeo ou como arquivo;
+- suporte a mídia enviada diretamente ao bot;
+- userbot opcional para arquivos acima do limite configurado do Bot API;
+- comandos do bot configurados automaticamente;
+- comando /diagnostico para testar texto, imagem, PDF e vídeo no Telegram;
+- proteção SSRF, redirects privados e limites de tamanho;
+- FastAPI, Docker, Railway e GitHub Actions.
 
-## Execução local
+## Bot
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements-dev.txt
-python -m playwright install chromium
-cp .env.example .env
-pytest -q
-python -m app.main api
-```
-
-API em `http://localhost:8000` e documentação em `/docs`.
-
-### Bot
-
-Preencha no `.env`:
+Variáveis mínimas:
 
 ```env
 IRIS_BOT_TOKEN=...
 IRIS_ADMIN_ID=...
 ```
 
-Depois:
+Para entrega de arquivos grandes por userbot:
+
+```env
+IRIS_TELEGRAM_API_ID=...
+IRIS_TELEGRAM_API_HASH=...
+IRIS_TELEGRAM_SESSION=...
+```
+
+Principais comandos:
+
+- `/start`
+- `/ajuda`
+- `/status`
+- `/jobs`
+- `/userbot`
+- `/diagnostico`
+- `/limpar`
+
+Execução:
 
 ```bash
 python -m app.main bot
 ```
 
-O usuário envia uma URL. O Iris faz a análise rápida e oferece uma análise profunda e download em lote dos vídeos/streams detectados.
-
 ## API
+
+```bash
+python -m app.main api
+```
+
+Documentação automática em `/docs`.
 
 ### Analisar página
 
@@ -62,30 +70,27 @@ curl -X POST http://localhost:8000/api/analyze \
   -d '{"url":"https://example.com","deep":false}'
 ```
 
-Use `deep=true` para acionar yt-dlp e Playwright.
-
-### Criar lote
-
-`POST /api/downloads` recebe uma lista de recursos retornados pela análise. Consulte o progresso em `GET /api/jobs/{id}`.
+Use `deep=true` para acionar Playwright e yt-dlp em paralelo.
 
 ## Motores
 
 O Iris escolhe automaticamente:
 
-- arquivo direto: `aria2c` -> HTTPX;
-- HLS/DASH: `N_m3u8DL-RE` -> `yt-dlp`;
-- análise por site: `yt-dlp`;
-- página dinâmica: Playwright.
+- imagens e arquivos simples: HTTPX;
+- arquivos grandes/diretos: aria2, com fallback HTTPX;
+- HLS/DASH: N_m3u8DL-RE quando disponível, depois yt-dlp;
+- sites suportados pelo yt-dlp: yt-dlp;
+- páginas dinâmicas: Playwright.
 
 O projeto não tenta contornar DRM ou controles de acesso.
 
 ## Testes
 
 ```bash
-ruff check app tests
+python -m compileall -q app tests
 pytest -q
 ```
 
-Os testes cobrem classificação de arquivos, HTML, JSON-LD, HLS, DASH, DRM, deduplicação, filas, API, nomes de arquivo e bloqueios SSRF.
+A suíte cobre HTML, JSON-LD, HLS, DASH, DRM, deduplicação, filas, downloads, SSRF, classificação de páginas, bundles e detecção de payloads de imagem inválidos/obfuscados.
 
-Veja [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Veja `docs/ARCHITECTURE.md`.
