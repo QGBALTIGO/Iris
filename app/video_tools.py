@@ -14,6 +14,7 @@ class VideoInfo:
     codec: str | None = None
     audio_codec: str | None = None
     format_name: str | None = None
+    pix_fmt: str | None = None
 
 
 async def _probe_json(path: Path) -> dict:
@@ -71,6 +72,7 @@ async def probe_video(path: Path) -> VideoInfo:
         codec=video.get("codec_name"),
         audio_codec=(audio or {}).get("codec_name"),
         format_name=(data.get("format") or {}).get("format_name"),
+        pix_fmt=video.get("pix_fmt"),
     )
 
 
@@ -137,13 +139,95 @@ def _is_mp4_container(info: VideoInfo) -> bool:
     return bool(names & {"mov", "mp4", "m4a", "3gp", "3g2", "mj2"})
 
 
-async def normalize_video_mp4(path: Path) -> tuple[Path, bool]:
-    """Return a Telegram-friendly MP4 and whether it is a temporary derivative.
+async def _run_ffmpeg(args: list[str]) -> tuple[bool, str]:
+    proc = await asyncio.create_subprocess_exec(
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel", "error",
+        "-y",
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    _, stderr = await proc.communicate()
+    return proc.returncode == 0, stderr.decode(errors="replace")
 
-    Fast path keeps H.264/AAC MP4 as-is (only moving moov atom to the front).
-    Other compatible containers are remuxed without re-encoding video.
-    Incompatible codecs are transcoded to H.264/AAC.
-    """
+
+async def _try_remux(path: Path, output: Path, info: VideoInfo) -> tuple[bool, str]:
+    args = [
+        "-i", str(path),
+        "-map", "0:v:0",
+        "-map", "0:a:0?",
+        "-sn",
+        "-dn",
+        "-c:v", "copy",
+    ]
+    if info.audio_codec is None:
+        pass
+    elif (info.audio_codec or "").lower() == "aac":
+        args += ["-c:a", "copy"]
+    else:
+        args += ["-c:a", "aac", "-b:a", "128k"]
+    args += [
+        "-movflags", "+faststart",
+        "-max_muxing_queue_size", "4096",
+        "-avoid_negative_ts", "make_zero",
+        str(output),
+    ]
+    return await _run_ffmpeg(args)
+
+
+async def _try_h264(path: Path, output: Path, preset: str, crf: int) -> tuple[bool, str]:
+    vf = "scale=ceil(iw/2)*2:ceil(ih/2)*2:flags=bicubic,setsar=1,format=yuv420p"
+    args = [
+        "-fflags", "+genpts",
+        "-i", str(path),
+        "-map", "0:v:0",
+        "-map", "0:a:0?",
+        "-sn",
+        "-dn",
+        "-vf", vf,
+        "-c:v", "libx264",
+        "-preset", preset,
+        "-crf", str(crf),
+        "-pix_fmt", "yuv420p",
+        "-fps_mode", "vfr",
+        "-c:a", "aac",
+        "-b:a", "128k",
+        "-ar", "48000",
+        "-movflags", "+faststart",
+        "-max_muxing_queue_size", "4096",
+        "-avoid_negative_ts", "make_zero",
+        str(output),
+    ]
+    return await _run_ffmpeg(args)
+
+
+async def _try_mpeg4_fallback(path: Path, output: Path) -> tuple[bool, str]:
+    vf = "scale=ceil(iw/2)*2:ceil(ih/2)*2:flags=bicubic,setsar=1,format=yuv420p"
+    args = [
+        "-fflags", "+genpts",
+        "-i", str(path),
+        "-map", "0:v:0",
+        "-map", "0:a:0?",
+        "-sn",
+        "-dn",
+        "-vf", vf,
+        "-c:v", "mpeg4",
+        "-q:v", "4",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac",
+        "-b:a", "128k",
+        "-ar", "48000",
+        "-movflags", "+faststart",
+        "-max_muxing_queue_size", "4096",
+        str(output),
+    ]
+    return await _run_ffmpeg(args)
+
+
+async def normalize_video_mp4(path: Path) -> tuple[Path, bool]:
+    """Return a Telegram-friendly MP4 and whether it is a temporary derivative."""
     path = Path(path)
     info = await probe_video(path)
 
@@ -156,49 +240,44 @@ async def normalize_video_mp4(path: Path) -> tuple[Path, bool]:
 
     output = path.with_name(path.stem + ".telegram.mp4")
     output.unlink(missing_ok=True)
-
-    cmd = [
-        "ffmpeg",
-        "-hide_banner",
-        "-loglevel", "error",
-        "-y",
-        "-i", str(path),
-        "-map", "0:v:0",
-        "-map", "0:a:0?",
-        "-sn",
-        "-dn",
-    ]
+    errors: list[str] = []
 
     if h264:
-        cmd += ["-c:v", "copy"]
-    else:
-        cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p"]
+        ok, stderr = await _try_remux(path, output, info)
+        if ok and output.exists() and output.stat().st_size > 0:
+            normalized = await probe_video(output)
+            if _is_mp4_container(normalized):
+                return output, True
+        errors.append("remux: " + stderr[-1200:])
+        output.unlink(missing_ok=True)
 
-    if info.audio_codec is None:
-        pass
-    elif aac_or_none:
-        cmd += ["-c:a", "copy"]
-    else:
-        cmd += ["-c:a", "aac", "-b:a", "128k"]
+    for preset, crf in (("veryfast", 22), ("ultrafast", 24)):
+        ok, stderr = await _try_h264(path, output, preset, crf)
+        if ok and output.exists() and output.stat().st_size > 0:
+            normalized = await probe_video(output)
+            if _is_mp4_container(normalized) and normalized.codec == "h264":
+                return output, True
+        errors.append(f"libx264/{preset}: " + stderr[-1600:])
+        output.unlink(missing_ok=True)
 
-    cmd += ["-movflags", "+faststart", str(output)]
+    ok, stderr = await _try_mpeg4_fallback(path, output)
+    if ok and output.exists() and output.stat().st_size > 0:
+        normalized = await probe_video(output)
+        if _is_mp4_container(normalized):
+            return output, True
+    errors.append("mpeg4: " + stderr[-1600:])
+    output.unlink(missing_ok=True)
 
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
+    joined = "\n---\n".join(errors)
+    print(
+        "IRIS_VIDEO_NORMALIZE_ERROR "
+        f"input={path.name} codec={info.codec} audio={info.audio_codec} "
+        f"pix_fmt={info.pix_fmt} size={info.width}x{info.height}\n{joined}",
+        flush=True,
     )
-    _, stderr = await proc.communicate()
-
-    if proc.returncode != 0 or not output.exists() or output.stat().st_size <= 0:
-        output.unlink(missing_ok=True)
-        raise RuntimeError(
-            stderr.decode(errors="replace")[-700:] or "FFmpeg não conseguiu gerar MP4 compatível"
-        )
-
-    normalized = await probe_video(output)
-    if not _is_mp4_container(normalized):
-        output.unlink(missing_ok=True)
-        raise RuntimeError("Saída do FFmpeg não é um container MP4 válido")
-
-    return output, True
+    raise RuntimeError(
+        "Não consegui normalizar este vídeo para MP4. "
+        f"Codec={info.codec or '?'} áudio={info.audio_codec or 'sem áudio'} "
+        f"resolução={info.width}x{info.height}. "
+        + joined[-1200:]
+    )
