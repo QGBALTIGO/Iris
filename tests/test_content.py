@@ -6,6 +6,7 @@ def test_manga_pages_are_separated_from_assets():
     resources = [
         MediaResource(url="https://cdn.test/secure/title/1/chapter/2/manga_page/high/2.jpg", type=ResourceType.IMAGE),
         MediaResource(url="https://cdn.test/secure/title/1/chapter/2/manga_page/high/1.jpg", type=ResourceType.IMAGE),
+        MediaResource(url="https://cdn.test/secure/title/1/chapter/500/chapter_thumbnail/613865.jpg", type=ResourceType.IMAGE),
         MediaResource(url="https://site.test/logo.png", type=ResourceType.IMAGE),
         MediaResource(url="https://site.test/cover.jpg", type=ResourceType.IMAGE),
     ]
