@@ -84,7 +84,7 @@ def progress_text(job: DownloadJob, speed_bps: float | None = None) -> str:
         "⬇️ <b>Baixando</b>",
         f"<code>{bar}</code>  <b>{aggregate * 100:.0f}%</b>",
         "",
-        f"📦 <b>{completed}/{total}</b> concluído(s)",
+        f"📦 Concluídos: {completed}/{total}",
     ]
     if downloaded:
         speed = f" • ⚡ {human_bytes(int(speed_bps))}/s" if speed_bps and speed_bps > 0 else ""
