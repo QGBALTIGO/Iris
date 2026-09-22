@@ -420,8 +420,29 @@ async def run_bot() -> None:
                             message_id=message.message_id,
                             caption=clean_caption or None,
                         )
+                        media_kind = (
+                            "video" if message.video else
+                            "animation" if message.animation else
+                            "audio" if message.audio else
+                            "voice" if message.voice else
+                            "photo" if message.photo else
+                            "document" if message.document else
+                            "other"
+                        )
+                        media_obj = (
+                            message.video
+                            or message.animation
+                            or message.audio
+                            or message.voice
+                            or message.document
+                        )
+                        duration = getattr(media_obj, "duration", None) if media_obj else None
+                        width = getattr(media_obj, "width", None) if media_obj else None
+                        height = getattr(media_obj, "height", None) if media_obj else None
                         print(
-                            f"IRIS_RELAY_OK source={message.chat_id} message={message.message_id} target={target_chat_id}",
+                            f"IRIS_RELAY_OK source={message.chat_id} message={message.message_id} "
+                            f"target={target_chat_id} kind={media_kind} duration={duration} "
+                            f"width={width} height={height}",
                             flush=True,
                         )
                         try:
