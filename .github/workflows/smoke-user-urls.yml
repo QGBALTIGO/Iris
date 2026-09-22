@@ -1,4 +1,5 @@
 name: User URL smoke test
+# revision 2: DRM visibility and lazy-load viewer interaction
 
 on:
   push:

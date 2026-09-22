@@ -16,7 +16,7 @@ class BlockedFetcher:
 
 @pytest.mark.asyncio
 async def test_403_falls_back_to_browser_even_without_deep(monkeypatch, tmp_path):
-    async def fake_browser(url, timeout_ms=18000, max_requests=1200):
+    async def fake_browser(url, timeout_ms=18000, max_requests=1200, interaction_rounds=8):
         return [MediaResource(url="https://cdn.example/video.mp4", type=ResourceType.VIDEO, source="browser:network")]
 
     monkeypatch.setattr(analyzer_module, "probe_browser", fake_browser)
@@ -30,7 +30,7 @@ async def test_403_falls_back_to_browser_even_without_deep(monkeypatch, tmp_path
 
 @pytest.mark.asyncio
 async def test_deep_continues_after_blocked_http(monkeypatch, tmp_path):
-    async def fake_browser(url, timeout_ms=18000, max_requests=1200):
+    async def fake_browser(url, timeout_ms=18000, max_requests=1200, interaction_rounds=8):
         return []
 
     async def fake_ytdlp(url):

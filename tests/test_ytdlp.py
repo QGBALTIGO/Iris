@@ -1,4 +1,6 @@
-from app.extractors.ytdlp import _convert
+import pytest
+
+from app.extractors.ytdlp import _convert, probe_ytdlp
 from app.models import ResourceType
 
 
@@ -35,3 +37,24 @@ def test_ytdlp_playlist_becomes_distinct_items():
     }
     resources = _convert(info)
     assert [r.title for r in resources] == ["One", "Two"]
+
+
+@pytest.mark.asyncio
+async def test_ytdlp_surfaces_drm_as_protected_resource(monkeypatch):
+    import yt_dlp
+
+    class FakeYDL:
+        def __init__(self, options):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def extract_info(self, url, download=False):
+            raise RuntimeError("[DRM] The requested site is known to use DRM protection")
+
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", FakeYDL)
+    resources = await probe_ytdlp("https://example.com/watch")
+    assert len(resources) == 1
+    assert resources[0].drm is True
+    assert resources[0].source == "yt-dlp:drm"

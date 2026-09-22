@@ -27,7 +27,23 @@ async def probe_ytdlp(url: str, timeout: float = 35.0) -> list[MediaResource]:
 
     try:
         return await asyncio.wait_for(asyncio.to_thread(_run), timeout=timeout)
-    except Exception:
+    except Exception as exc:
+        message = str(exc)
+        if "DRM" in message.upper() or "digital rights management" in message.lower():
+            return [
+                MediaResource(
+                    url=str(url),
+                    type=ResourceType.VIDEO,
+                    source="yt-dlp:drm",
+                    drm=True,
+                    metadata={
+                        "engine": "yt-dlp",
+                        "status": "protected",
+                        "reason": "drm",
+                        "error": message[:500],
+                    },
+                )
+            ]
         return []
 
 

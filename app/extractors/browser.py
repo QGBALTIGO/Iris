@@ -30,7 +30,12 @@ def _useful_headers(headers: dict[str, str]) -> dict[str, str]:
     }
 
 
-async def probe_browser(url: str, timeout_ms: int = 18_000, max_requests: int = 1200) -> list[MediaResource]:
+async def probe_browser(
+    url: str,
+    timeout_ms: int = 18_000,
+    max_requests: int = 1200,
+    interaction_rounds: int = 8,
+) -> list[MediaResource]:
     try:
         from playwright.async_api import async_playwright
     except ImportError:
@@ -106,9 +111,72 @@ async def probe_browser(url: str, timeout_ms: int = 18_000, max_requests: int = 
             await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
             with suppress(Exception):
                 await page.wait_for_load_state("networkidle", timeout=5_000)
+
+            rounds = max(0, interaction_rounds)
+            for _ in range(rounds):
+                with suppress(Exception):
+                    await page.evaluate(
+                        """() => {
+                            const step = Math.max(window.innerHeight * 0.9, 900);
+                            window.scrollBy(0, step);
+                            for (const el of document.querySelectorAll('*')) {
+                                const s = getComputedStyle(el);
+                                if ((s.overflowY === 'auto' || s.overflowY === 'scroll') &&
+                                    el.scrollHeight > el.clientHeight + 100) {
+                                    el.scrollTop = Math.min(el.scrollHeight, el.scrollTop + Math.max(el.clientHeight * 0.9, 800));
+                                }
+                                if ((s.overflowX === 'auto' || s.overflowX === 'scroll') &&
+                                    el.scrollWidth > el.clientWidth + 100) {
+                                    el.scrollLeft = Math.min(el.scrollWidth, el.scrollLeft + Math.max(el.clientWidth * 0.9, 800));
+                                }
+                            }
+                        }"""
+                    )
+                with suppress(Exception):
+                    await page.mouse.wheel(0, 1800)
+                with suppress(Exception):
+                    await page.keyboard.press("PageDown")
+                with suppress(Exception):
+                    await page.wait_for_timeout(350)
+                async with lock:
+                    if len(found) >= max_requests:
+                        break
+
+            # Catch cached/lazy resources that may not emit a new response callback.
             with suppress(Exception):
-                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                await page.wait_for_timeout(1200)
+                extra_urls = await page.evaluate(
+                    """() => {
+                        const values = new Set();
+                        for (const img of document.images) {
+                            if (img.currentSrc) values.add(img.currentSrc);
+                            else if (img.src) values.add(img.src);
+                        }
+                        for (const v of document.querySelectorAll('video,audio,source')) {
+                            if (v.currentSrc) values.add(v.currentSrc);
+                            if (v.src) values.add(v.src);
+                        }
+                        for (const entry of performance.getEntriesByType('resource')) {
+                            if (entry && entry.name) values.add(entry.name);
+                        }
+                        return Array.from(values);
+                    }"""
+                )
+                for candidate in extra_urls[:max_requests]:
+                    kind = classify_resource(candidate)
+                    if kind == ResourceType.OTHER:
+                        continue
+                    try:
+                        await validate_public_url(candidate)
+                    except (UnsafeUrlError, ValueError):
+                        continue
+                    found.append(
+                        MediaResource(
+                            url=candidate,
+                            type=kind,
+                            source="browser:dom",
+                            headers={"referer": page.url, "user-agent": _BROWSER_UA},
+                        )
+                    )
         finally:
             await context.close()
             await browser.close()

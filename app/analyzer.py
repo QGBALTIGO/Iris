@@ -59,7 +59,6 @@ class Analyzer:
         resources = deduplicate(resources)
         await self._inspect_manifests(resources, warnings)
 
-        # If a normal request is blocked, a real browser gets one chance even in quick mode.
         browser_fallback = blocked_status in {401, 403, 429}
         if self.config.browser_enabled and (deep or browser_fallback):
             try:
@@ -67,6 +66,7 @@ class Analyzer:
                     final_url,
                     max_requests=self.config.max_browser_requests,
                     timeout_ms=18_000 if deep else 12_000,
+                    interaction_rounds=10 if deep else 2,
                 )
                 resources.extend(browser_resources)
                 if browser_fallback and browser_resources:
@@ -75,7 +75,10 @@ class Analyzer:
                 warnings.append(f"Browser profundo indisponível: {type(exc).__name__}")
 
         if deep and self.config.ytdlp_enabled:
-            resources.extend(await probe_ytdlp(final_url))
+            ytdlp_resources = await probe_ytdlp(final_url)
+            resources.extend(ytdlp_resources)
+            if any(item.drm for item in ytdlp_resources):
+                warnings.append("O extrator identificou mídia protegida por DRM; o Iris apenas sinaliza e não tenta contornar a proteção.")
 
         resources = [r for r in deduplicate(resources) if not r.metadata.get("navigation_only")]
         await self._inspect_manifests(resources, warnings)
