@@ -499,7 +499,7 @@ class SiteQueueManager:
         self.task = asyncio.create_task(self._worker(bot), name="iris-site-queue")
 
     async def resume(self, bot, target_chat_id: int) -> None:
-        self.reset_stale()
+        self.reset_stale(0)
         await self.start(bot, target_chat_id, discover=False)
 
     async def maybe_resume(self, bot) -> bool:
@@ -509,7 +509,7 @@ class SiteQueueManager:
         target = state["target_chat_id"] or settings.admin_id
         if not target:
             return False
-        self.reset_stale()
+        self.reset_stale(0)
         await self.start(bot, int(target), discover=False)
         return True
 
