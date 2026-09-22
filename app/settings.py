@@ -44,6 +44,7 @@ class Settings:
     cleanup_after_delivery: bool = _bool("IRIS_CLEANUP_AFTER_DELIVERY", True)
     notify_startup: bool = _bool("IRIS_NOTIFY_STARTUP", False)
     run_benchmark: bool = _bool("IRIS_RUN_BENCHMARK", False)
+    run_video_smoke: bool = _bool("IRIS_RUN_VIDEO_SMOKE", False)
 
 
 settings = Settings()
