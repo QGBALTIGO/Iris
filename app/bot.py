@@ -128,6 +128,9 @@ def _analysis_text(result: AnalyzeResult, elapsed: float | None = None) -> str:
         lines.append(f"Áudios: {stats['audio']}")
     if stats["chapter_pages"]:
         lines.append(f"Páginas do capítulo: {stats['chapter_pages']}")
+        pages = chapter_pages(result)
+        if pages and any(p.metadata.get("raw_downloadable") is False for p in pages):
+            lines.append("Exportação das páginas: conteúdo renderizado/protegido pelo leitor")
     if stats["images"]:
         lines.append(f"Imagens úteis: {stats['images']}")
     if stats["files"]:
@@ -329,11 +332,19 @@ async def run_bot() -> None:
         rows = []
 
         if bucket == "p" and resources:
-            rows.append([
-                InlineKeyboardButton("Gerar PDF", callback_data=f"bundle:pdf:{bucket}:{key}"),
-                InlineKeyboardButton("Gerar ZIP", callback_data=f"bundle:zip:{bucket}:{key}"),
-            ])
-            rows.append([InlineKeyboardButton("Enviar páginas", callback_data=f"all:{bucket}:{key}:file")])
+            raw_exportable = all(r.metadata.get("raw_downloadable", True) is not False for r in resources)
+            if raw_exportable:
+                rows.append([
+                    InlineKeyboardButton("Gerar PDF", callback_data=f"bundle:pdf:{bucket}:{key}"),
+                    InlineKeyboardButton("Gerar ZIP", callback_data=f"bundle:zip:{bucket}:{key}"),
+                ])
+                rows.append([InlineKeyboardButton("Enviar páginas", callback_data=f"all:{bucket}:{key}:file")])
+            else:
+                lines.append(
+                    "As páginas foram detectadas, mas este leitor não entrega imagens brutas válidas. "
+                    "PDF, ZIP e download em lote ficam desativados para evitar arquivos corrompidos."
+                )
+                lines.append("")
         elif bucket == "i" and resources:
             rows.append([InlineKeyboardButton("Baixar imagens em ZIP", callback_data=f"bundle:zip:{bucket}:{key}")])
 
@@ -428,7 +439,11 @@ async def run_bot() -> None:
             await asyncio.sleep(1.2)
 
     async def launch_download(query, selected: list[MediaResource], *, delivery_mode: str = "file", bundle_mode: str | None = None):
-        selected = [resource for resource in selected if not resource.drm]
+        selected = [
+            resource
+            for resource in selected
+            if not resource.drm and resource.metadata.get("raw_downloadable", True) is not False
+        ]
         if not selected:
             await query.edit_message_text("IRIS • Indisponível\n\nNenhum recurso baixável nessa seleção.")
             return
