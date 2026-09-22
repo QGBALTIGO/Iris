@@ -1,0 +1,57 @@
+name: XVideosPutaria HLS debug
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/xvp-hls-debug.yml"
+
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      - run: python -m playwright install --with-deps chromium
+      - name: Analyze HLS resources
+        env:
+          IRIS_DOWNLOADS_DIR: /tmp/iris-xvp
+          IRIS_MAX_BROWSER_REQUESTS: "2500"
+        run: |
+          python - <<'PY'
+          import asyncio, json
+          from urllib.parse import urlsplit
+          from app.analyzer import Analyzer
+          from app.video_candidates import video_candidate_rank
+          from app.models import ResourceType
+
+          URL="https://xvideosputaria.com/anao-gabriela-gadotti-mini-gabys-boquetando-com-leite-na-boca/#forward"
+
+          async def main():
+              result=await Analyzer().analyze(URL,deep=True)
+              rows=[]
+              for r in result.resources:
+                  if r.type in {ResourceType.VIDEO,ResourceType.PLAYLIST,ResourceType.STREAM} or urlsplit(r.url).path.lower().endswith((".ts",".m3u8",".mpd",".mp4")):
+                      rows.append({
+                          "url":r.url,
+                          "type":r.type.value,
+                          "source":r.source,
+                          "mime":r.mime_type,
+                          "metadata":r.metadata,
+                          "rank":video_candidate_rank(r),
+                          "variants":[v.model_dump() for v in r.variants[:5]],
+                      })
+              rows.sort(key=lambda x:x["rank"])
+              print("XVP_HLS_DEBUG "+json.dumps({
+                  "title":result.title,
+                  "warnings":result.warnings,
+                  "resources":rows[:80]
+              },ensure_ascii=False))
+
+          asyncio.run(main())
+          PY
