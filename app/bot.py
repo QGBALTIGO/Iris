@@ -6,7 +6,7 @@ import shutil
 import time
 import uuid
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from app.analyzer import Analyzer
 from app.benchmark import run_admin_benchmark
@@ -96,7 +96,7 @@ def progress_text(job: DownloadJob, speed_bps: float | None = None) -> str:
         lines.append(f"⚠️ {failed} falha(s)")
     running = next((item for item in job.items if item.state == JobState.RUNNING), None)
     if running:
-        name = Path(urlsplit(running.url).path).name or "arquivo"
+        name = unquote(Path(urlsplit(running.url).path).name) or "arquivo"
         lines.extend(["", f"⏳ <i>{_safe(name, 52)}</i>"])
     return "\n".join(lines)
 
@@ -548,7 +548,7 @@ async def run_bot() -> None:
             ])
 
         for offset, resource in enumerate(subset, start=start):
-            label = resource.title or Path(urlsplit(resource.url).path).name or resource.type.value
+            label = resource.title or unquote(Path(urlsplit(resource.url).path).name) or resource.type.value
             suffix = ""
             quality = resource.quality or (f"{resource.height}p" if resource.height else None)
             if quality:
