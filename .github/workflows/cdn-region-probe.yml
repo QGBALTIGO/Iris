@@ -1,0 +1,30 @@
+name: CDN region probe
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/cdn-region-probe.yml"
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      - run: python -m playwright install --with-deps chromium
+      - name: Probe source CDN
+        run: |
+          python - <<'PY'
+          import asyncio
+          from app.source_speed_smoke import run_source_speed_smoke
+          async def main():
+              for row in await run_source_speed_smoke():
+                  print("REGION_PROBE " + row)
+          asyncio.run(main())
+          PY
