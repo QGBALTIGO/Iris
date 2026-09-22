@@ -1,0 +1,165 @@
+name: Iris validation matrix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/validation-matrix.yml"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      - run: sudo apt-get update && sudo apt-get install -y aria2 ffmpeg
+      - run: python -m playwright install --with-deps chromium
+      - name: Run validation matrix
+        env:
+          IRIS_BROWSER_ENABLED: "true"
+          IRIS_YTDLP_ENABLED: "true"
+          IRIS_MAX_BROWSER_REQUESTS: "1800"
+          IRIS_DOWNLOAD_CONCURRENCY: "6"
+          IRIS_DOWNLOADS_DIR: "/tmp/iris-downloads"
+        run: |
+          python - <<'PY'
+          import asyncio, json, time
+          from pathlib import Path
+          from urllib.parse import urlsplit
+
+          import httpx
+
+          from app.analyzer import Analyzer
+          from app.content import chapter_pages, content_summary
+          from app.delivery import build_pdf, build_zip
+          from app.downloads import DownloadEngine
+          from app.models import MediaResource, ResourceType
+
+          TARGETS = {
+              "html": "https://example.com/",
+              "image": "https://httpbin.org/image/jpeg",
+              "pdf": "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf",
+              "mp4": "https://download.samplelib.com/mp4/sample-5s.mp4",
+              "hls": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+              "adult_page": "https://pornocomlegenda.blog/meia-irma-ensinando-o-irmao-a-durar-mais-no-sexo-family-therapy-legendado/",
+              "mangaplus": "https://mangaplus.shueisha.co.jp/viewer/1009176",
+              "crunchyroll": "https://www.crunchyroll.com/pt-br/watch/GMKUX478J/jobless-reincarnation",
+          }
+
+          def emit(name, payload):
+              print("IRIS_MATRIX " + json.dumps({"case": name, **payload}, ensure_ascii=False))
+
+          async def analyze_case(name, url, deep=False):
+              started = time.monotonic()
+              try:
+                  out = await Analyzer().analyze(url, deep=deep)
+                  emit(name, {
+                      "stage": "analyze",
+                      "ok": True,
+                      "deep": deep,
+                      "seconds": round(time.monotonic() - started, 3),
+                      "title": out.title,
+                      "summary": content_summary(out),
+                      "total": len(out.resources),
+                      "warnings": out.warnings,
+                      "media": [
+                          {
+                              "type": r.type.value,
+                              "source": r.source,
+                              "host": urlsplit(r.url).netloc,
+                              "path": urlsplit(r.url).path[-120:],
+                              "drm": r.drm,
+                              "variants": len(r.variants),
+                          }
+                          for r in out.resources
+                          if r.type in {ResourceType.VIDEO, ResourceType.PLAYLIST, ResourceType.STREAM, ResourceType.AUDIO}
+                      ][:8],
+                  })
+                  return out
+              except Exception as e:
+                  emit(name, {"stage":"analyze","ok":False,"deep":deep,"seconds":round(time.monotonic()-started,3),"error":f"{type(e).__name__}: {e}"})
+                  return None
+
+          async def download_resource(name, resource, filename):
+              engine = DownloadEngine()
+              started = time.monotonic()
+              try:
+                  path = await engine.download(resource, filename=filename)
+                  elapsed = max(time.monotonic() - started, 0.001)
+                  size = path.stat().st_size
+                  head = path.read_bytes()[:16].hex()
+                  emit(name, {
+                      "stage":"download",
+                      "ok":True,
+                      "seconds":round(elapsed,3),
+                      "bytes":size,
+                      "mbps":round((size/1024/1024)/elapsed,3),
+                      "file":path.name,
+                      "head_hex":head,
+                  })
+                  return path
+              except Exception as e:
+                  emit(name, {"stage":"download","ok":False,"seconds":round(time.monotonic()-started,3),"error":f"{type(e).__name__}: {e}"})
+                  return None
+
+          async def main():
+              Path("/tmp/iris-downloads").mkdir(parents=True, exist_ok=True)
+
+              await analyze_case("html", TARGETS["html"], False)
+
+              direct_image = MediaResource(url=TARGETS["image"], type=ResourceType.IMAGE)
+              direct_pdf = MediaResource(url=TARGETS["pdf"], type=ResourceType.DOCUMENT)
+              direct_mp4 = MediaResource(url=TARGETS["mp4"], type=ResourceType.VIDEO)
+              await download_resource("image", direct_image, "sample.jpg")
+              await download_resource("pdf", direct_pdf, "sample.pdf")
+              await download_resource("mp4", direct_mp4, "sample.mp4")
+
+              await analyze_case("hls", TARGETS["hls"], False)
+
+              adult = await analyze_case("adult_page", TARGETS["adult_page"], True)
+              if adult:
+                  vids = [r for r in adult.resources if r.type in {ResourceType.VIDEO, ResourceType.PLAYLIST, ResourceType.STREAM} and not r.drm]
+                  if vids:
+                      # Validate bytes without pulling the whole adult video.
+                      r = vids[0]
+                      headers = dict(r.headers)
+                      headers["Range"] = "bytes=0-1048575"
+                      started = time.monotonic()
+                      try:
+                          async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+                              resp = await client.get(r.url, headers=headers)
+                          emit("adult_page", {
+                              "stage":"range_probe","ok":resp.status_code in {200,206},
+                              "status":resp.status_code,"bytes":len(resp.content),
+                              "seconds":round(time.monotonic()-started,3),
+                              "content_type":resp.headers.get("content-type"),
+                          })
+                      except Exception as e:
+                          emit("adult_page", {"stage":"range_probe","ok":False,"error":f"{type(e).__name__}: {e}"})
+
+              manga = await analyze_case("mangaplus", TARGETS["mangaplus"], True)
+              if manga:
+                  pages = chapter_pages(manga)
+                  emit("mangaplus", {"stage":"chapter_pages","ok":bool(pages),"count":len(pages),"numbers":[p.metadata.get("page_number") for p in pages]})
+                  selected = []
+                  for idx, page in enumerate(pages[:2]):
+                      path = await download_resource("mangaplus", page, f"page-{idx+1:03d}.jpg")
+                      if path:
+                          selected.append(path)
+                  if selected:
+                      pdf = build_pdf(selected, Path("/tmp/iris-downloads/mangaplus-test.pdf"))
+                      zip_path = build_zip(selected, Path("/tmp/iris-downloads/mangaplus-test.zip"))
+                      emit("mangaplus", {"stage":"bundles","ok":True,"pdf_bytes":pdf.stat().st_size,"zip_bytes":zip_path.stat().st_size})
+
+              crunchy = await analyze_case("crunchyroll", TARGETS["crunchyroll"], True)
+              if crunchy:
+                  protected = [r for r in crunchy.resources if r.drm]
+                  emit("crunchyroll", {"stage":"drm","ok":bool(protected),"drm_count":len(protected)})
+
+          asyncio.run(main())
+          PY
