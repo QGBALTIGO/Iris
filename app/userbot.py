@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+from app.fast_mtproto import upload_path
 from app.settings import Settings, settings
 
 
@@ -138,13 +139,17 @@ class UserbotManager:
             if not await client.is_user_authorized():
                 raise RuntimeError("Conta 06 ainda não está autenticada.")
             target = bot_username if bot_username.startswith("@") else f"@{bot_username}"
+            payload = file_or_url
+            path = Path(file_or_url) if isinstance(file_or_url, (str, Path)) else None
+            if path is not None and path.is_file():
+                payload = await upload_path(client, path, progress_callback=progress_callback)
             return await client.send_file(
                 target,
-                str(file_or_url),
+                payload,
                 caption=caption or "",
                 force_document=not as_video,
                 supports_streaming=as_video,
-                progress_callback=progress_callback,
+                progress_callback=progress_callback if path is None or not path.is_file() else None,
             )
 
     async def delete_from_bot_chat(self, bot_username: str, message_id: int) -> None:
