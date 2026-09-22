@@ -9,6 +9,7 @@ from pathlib import Path
 from app.models import MediaResource, ResourceType
 from app.settings import Settings, settings
 from app.userbot import userbot
+from app.video_tools import normalize_video_mp4
 
 _VIDEO_EXT = {".mp4", ".mkv", ".webm", ".mov", ".m4v"}
 _REMOTE_DOCUMENT_EXT = {".pdf", ".zip"}
@@ -259,41 +260,55 @@ class DeliveryManager:
         if not path.is_file():
             raise FileNotFoundError(path)
 
-        size = path.stat().st_size
-        prefer_userbot = size >= self.config.userbot_threshold_bytes
-        ready = await userbot.is_authorized() if userbot.configured else False
+        send_path = path
+        generated_mp4 = False
+        if as_video:
+            send_path, generated_mp4 = await normalize_video_mp4(path)
 
-        if prefer_userbot and ready:
-            await self._send_via_userbot(
-                message,
-                path,
-                caption=caption,
-                as_video=as_video and path.suffix.lower() in _VIDEO_EXT,
-                progress_callback=progress_callback,
-            )
-            return "userbot"
+        try:
+            size = send_path.stat().st_size
+            prefer_userbot = size >= self.config.userbot_threshold_bytes
+            ready = await userbot.is_authorized() if userbot.configured else False
 
-        if size <= self.config.bot_upload_limit_bytes:
-            from telegram import InputFile
+            if prefer_userbot and ready:
+                await self._send_via_userbot(
+                    message,
+                    send_path,
+                    caption=caption,
+                    as_video=True,
+                    progress_callback=progress_callback,
+                )
+                return "userbot"
 
-            with path.open("rb") as fh:
-                payload = InputFile(fh, filename=path.name)
-                if as_video and path.suffix.lower() in _VIDEO_EXT:
-                    await message.reply_video(video=payload, caption=caption, supports_streaming=True)
-                    return "bot:video"
-                await message.reply_document(document=payload, caption=caption)
-                return "bot:file"
+            if size <= self.config.bot_upload_limit_bytes:
+                from telegram import InputFile
 
-        if ready:
-            await self._send_via_userbot(
-                message,
-                path,
-                caption=caption,
-                as_video=as_video and path.suffix.lower() in _VIDEO_EXT,
-            )
-            return "userbot"
+                with send_path.open("rb") as fh:
+                    payload = InputFile(fh, filename=send_path.name)
+                    if as_video:
+                        await message.reply_video(
+                            video=payload,
+                            caption=caption,
+                            supports_streaming=True,
+                        )
+                        return "bot:video"
+                    await message.reply_document(document=payload, caption=caption)
+                    return "bot:file"
 
-        raise RuntimeError("Arquivo grande e a Conta 06 ainda não está autenticada.")
+            if ready:
+                await self._send_via_userbot(
+                    message,
+                    send_path,
+                    caption=caption,
+                    as_video=as_video,
+                    progress_callback=progress_callback,
+                )
+                return "userbot"
+
+            raise RuntimeError("Arquivo grande e a Conta 06 ainda não está autenticada.")
+        finally:
+            if generated_mp4:
+                send_path.unlink(missing_ok=True)
 
     async def cleanup(self, paths: list[Path]) -> None:
         if not self.config.cleanup_after_delivery:
