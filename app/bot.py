@@ -11,7 +11,7 @@ from urllib.parse import urlsplit
 from app.analyzer import Analyzer
 from app.benchmark import run_admin_benchmark
 from app.content import chapter_pages, content_images, content_summary
-from app.delivery import DeliveryManager, build_pdf, build_zip, human_bytes
+from app.delivery import DeliveryManager, build_pdf, build_zip, human_bytes, parse_relay_caption
 from app.jobs import JobStore
 from app.models import AnalyzeResult, DownloadJob, JobState, MediaResource, ResourceType
 from app.selftest import run_telegram_selftest
@@ -403,9 +403,37 @@ async def run_bot() -> None:
 
     async def on_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
         uid = update.effective_user.id if update.effective_user else None
+        message = update.effective_message
+
+        # Internal Account 06 relay. The bot receives the userbot upload with
+        # the Bot API's own message_id and can copy it server-side without
+        # resolving the admin as an MTProto PeerUser or uploading twice.
+        if uid and userbot.configured and await userbot.is_authorized():
+            try:
+                if uid == await userbot.user_id():
+                    relay = parse_relay_caption(message.caption)
+                    if relay:
+                        target_chat_id, clean_caption = relay
+                        await context.bot.copy_message(
+                            chat_id=target_chat_id,
+                            from_chat_id=message.chat_id,
+                            message_id=message.message_id,
+                            caption=clean_caption or None,
+                        )
+                        try:
+                            await context.bot.delete_message(
+                                chat_id=message.chat_id,
+                                message_id=message.message_id,
+                            )
+                        except Exception:
+                            pass
+                    return
+            except Exception as exc:
+                print(f"IRIS_RELAY_ERROR {type(exc).__name__}: {exc}", flush=True)
+                return
+
         if not _can_use(uid):
             return
-        message = update.effective_message
         obj = (
             message.video
             or message.video_note
