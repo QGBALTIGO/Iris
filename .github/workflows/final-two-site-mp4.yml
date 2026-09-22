@@ -1,0 +1,89 @@
+name: Final two-site MP4 validation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/final-two-site-mp4.yml"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg aria2
+      - run: python -m playwright install --with-deps chromium
+      - name: Validate real MP4 outputs
+        env:
+          IRIS_DOWNLOADS_DIR: /tmp/iris-final-mp4
+          IRIS_MAX_BROWSER_REQUESTS: "1800"
+        run: |
+          python - <<'PY'
+          import asyncio, json, time
+          from pathlib import Path
+          from app.analyzer import Analyzer
+          from app.bot import resources_for_bucket
+          from app.downloads import DownloadEngine
+          from app.video_tools import normalize_video_mp4, probe_video
+
+          URLS = {
+              "tubepussy": "https://tubepussy.org/ruiva-isabel-dando-a-bucetinha-e-levando-na-cara/#forward",
+              "xvideosputaria": "https://xvideosputaria.com/anao-gabriela-gadotti-mini-gabys-boquetando-com-leite-na-boca/#forward",
+          }
+
+          async def validate_one(name,url):
+              started=time.monotonic()
+              result=await Analyzer().analyze(url,deep=True)
+              media=resources_for_bucket(result,"v")
+              row={
+                "name":name,"title":result.title,"seconds":round(time.monotonic()-started,3),
+                "warnings":result.warnings,"count":len(media),
+                "ordered":[{"url":r.url,"type":r.type.value,"source":r.source,"title":r.title} for r in media[:5]]
+              }
+              if not media:
+                  print("FINAL_MP4 "+json.dumps(row,ensure_ascii=False))
+                  if name=="xvideosputaria":
+                      assert any("Cloudflare challenge" in w for w in result.warnings), result.warnings
+                      return
+                  raise AssertionError(f"{name}: nenhuma mídia")
+
+              selected=media[0]
+              path=await DownloadEngine().download(selected)
+              normalized,generated=await normalize_video_mp4(path)
+              try:
+                  info=await probe_video(normalized)
+                  row.update({
+                      "selected":selected.url,
+                      "download_path":str(path),
+                      "final_path":str(normalized),
+                      "generated_mp4":generated,
+                      "final_suffix":normalized.suffix,
+                      "final_codec":info.codec,
+                      "final_audio":info.audio_codec,
+                      "final_format":info.format_name,
+                      "width":info.width,"height":info.height,
+                      "bytes":normalized.stat().st_size,
+                  })
+                  print("FINAL_MP4 "+json.dumps(row,ensure_ascii=False))
+                  assert normalized.suffix.lower()==".mp4"
+                  assert info.codec=="h264"
+                  assert info.audio_codec in {None,"aac"}
+                  assert "mp4" in (info.format_name or "")
+              finally:
+                  if generated:
+                      normalized.unlink(missing_ok=True)
+                  path.unlink(missing_ok=True)
+
+          async def main():
+              Path("/tmp/iris-final-mp4").mkdir(parents=True,exist_ok=True)
+              for name,url in URLS.items():
+                  await validate_one(name,url)
+
+          asyncio.run(main())
+          PY
