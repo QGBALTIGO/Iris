@@ -132,7 +132,13 @@ class SiteQueueManager:
                 )
             else:
                 merged[row[1]] = row
-        rows = list(merged.values())
+        site_root = site.rstrip("/")
+        rows = [
+            row
+            for row in merged.values()
+            if row[1].rstrip("/") != site_root
+            and urlsplit(row[1]).netloc.lower() == urlsplit(site).netloc.lower()
+        ]
 
         if not rows:
             raise RuntimeError("Nenhuma postagem foi descoberta no site.")
