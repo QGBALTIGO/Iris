@@ -6,7 +6,9 @@ import time
 import httpx
 
 from app.analyzer import Analyzer
+from app.downloads import DownloadEngine
 from app.models import ResourceType
+from app.settings import settings
 
 REAL_PAGE = "https://pornocomlegenda.blog/meia-irma-ensinando-o-irmao-a-durar-mais-no-sexo-family-therapy-legendado/"
 PROBE_BYTES = 32 * 1024 * 1024
@@ -67,4 +69,20 @@ async def run_source_speed_smoke() -> list[str]:
             rows.append(f"{name} bytes={read} seconds={seconds:.3f} mbps={rate:.3f}")
         except Exception as exc:
             rows.append(f"{name} error={type(exc).__name__}:{str(exc)[:160]}")
+
+    target = settings.downloads_dir / "source-speed-full.mp4"
+    started = time.monotonic()
+    try:
+        path = await asyncio.wait_for(
+            DownloadEngine().download(resource, filename=target.name),
+            timeout=240,
+        )
+        seconds = time.monotonic() - started
+        size = path.stat().st_size
+        rate = (size / 1024 / 1024) / max(seconds, 0.001)
+        rows.append(f"aria2_full bytes={size} seconds={seconds:.3f} mbps={rate:.3f}")
+    except Exception as exc:
+        rows.append(f"aria2_full error={type(exc).__name__}:{str(exc)[:160]}")
+    finally:
+        target.unlink(missing_ok=True)
     return rows
