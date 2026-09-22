@@ -8,11 +8,12 @@ from app.models import AnalyzeResult, MediaResource, ResourceType
 
 _PAGE_PATTERNS = (
     re.compile(r"/manga_page/(?:high|low|medium)/(\d+)\.(?:jpe?g|png|webp)$", re.I),
-    re.compile(r"/(?:pages?|chapter|chapters?)/(?:[^/]+/)*(\d+)\.(?:jpe?g|png|webp)$", re.I),
+    re.compile(r"/pages?/(?:[^/]+/)*(\d+)\.(?:jpe?g|png|webp)$", re.I),
 )
 _ASSET_WORDS = {
     "favicon", "logo", "icon", "sprite", "avatar", "banner", "badge", "pixel", "tracking",
     "spinner", "loading", "placeholder", "emoji", "advert", "ads", "cookie", "onetrust",
+    "thumbnail",
 }
 
 
