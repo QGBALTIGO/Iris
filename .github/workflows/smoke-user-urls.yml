@@ -1,5 +1,4 @@
 name: User URL smoke test
-# revision 3: adaptive lazy-load crawl and content-specific counters
 
 on:
   push:
@@ -27,9 +26,11 @@ jobs:
           IRIS_MAX_BROWSER_REQUESTS: "1800"
         run: |
           python - <<'PY'
-          import asyncio, json
-          from collections import Counter
+          import asyncio, json, re
           from urllib.parse import urlsplit
+
+          import httpx
+
           from app.analyzer import Analyzer
 
           URLS = [
@@ -38,63 +39,74 @@ jobs:
               "https://mangaplus.shueisha.co.jp/viewer/1009176",
           ]
 
-          def compact(r):
+          def safe_resource(r):
               u = urlsplit(r.url)
               return {
                   "type": r.type.value,
                   "source": r.source,
                   "host": u.netloc,
-                  "path": u.path[-120:],
+                  "path": u.path[-180:],
                   "variants": len(r.variants),
                   "drm": r.drm,
                   "encrypted": r.encrypted,
-                  "quality": r.quality,
                   "mime": r.mime_type,
+                  "has_headers": bool(r.headers),
               }
 
-          async def one(url, deep):
-              a = Analyzer()
+          async def prefix_probe(r):
+              headers = dict(r.headers)
+              headers["Range"] = "bytes=0-2047"
               try:
-                  out = await a.analyze(url, deep=deep)
-                  counts = Counter(r.type.value for r in out.resources)
-                  downloadable = [r for r in out.resources if r.type.value in {"video","audio","stream","playlist","image","document","archive"}]
-                  videos = [r for r in out.resources if r.type.value in {"video","stream","playlist"}]
-                  manga_pages = [
-                      r for r in out.resources
-                      if "/manga_page/" in urlsplit(r.url).path
-                  ]
-                  print("IRIS_RESULT " + json.dumps({
-                      "url": url,
-                      "deep": deep,
-                      "ok": True,
-                      "final_url": out.final_url,
-                      "title": out.title,
-                      "content_type": out.content_type,
-                      "counts": dict(counts),
-                      "total": len(out.resources),
-                      "downloadable": len(downloadable),
-                      "drm_count": sum(1 for r in out.resources if r.drm),
-                      "encrypted_count": sum(1 for r in out.resources if r.encrypted),
-                      "video_count": len(videos),
-                      "videos": [compact(r) for r in videos[:10]],
-                      "manga_page_count": len(manga_pages),
-                      "manga_pages": [compact(r) for r in manga_pages[:12]],
-                      "warnings": out.warnings,
-                      "sample": [compact(r) for r in out.resources[:20]],
-                  }, ensure_ascii=False))
+                  async with httpx.AsyncClient(timeout=20, follow_redirects=True, trust_env=False) as client:
+                      async with client.stream("GET", r.url, headers=headers) as resp:
+                          first = b""
+                          async for chunk in resp.aiter_bytes():
+                              first += chunk
+                              if len(first) >= 2048:
+                                  break
+                          return {
+                              "status": resp.status_code,
+                              "content_type": resp.headers.get("content-type"),
+                              "content_length": resp.headers.get("content-length"),
+                              "bytes_read": len(first),
+                          }
               except Exception as e:
-                  print("IRIS_RESULT " + json.dumps({
-                      "url": url,
-                      "deep": deep,
-                      "ok": False,
-                      "error_type": type(e).__name__,
-                      "error": str(e)[:500],
-                  }, ensure_ascii=False))
+                  return {"error_type": type(e).__name__, "error": str(e)[:250]}
 
           async def main():
               for url in URLS:
-                  await one(url, False)
-                  await one(url, True)
+                  a = Analyzer()
+                  try:
+                      out = await a.analyze(url, deep=True)
+                  except Exception as e:
+                      print("TARGET_RESULT " + json.dumps({
+                          "url": url, "ok": False, "error_type": type(e).__name__, "error": str(e)[:500]
+                      }, ensure_ascii=False))
+                      continue
+
+                  media = [r for r in out.resources if r.type.value in {"video","audio","playlist","stream"}]
+                  manga_pages = [r for r in out.resources if "/manga_page/" in urlsplit(r.url).path]
+                  page_numbers = []
+                  for r in manga_pages:
+                      m = re.search(r"/(\d+)\.jpg$", urlsplit(r.url).path)
+                      if m:
+                          page_numbers.append(int(m.group(1)))
+                  probes = []
+                  for r in (media[:2] + ([manga_pages[0], manga_pages[-1]] if manga_pages else [])):
+                      probes.append({"resource": safe_resource(r), "probe": await prefix_probe(r)})
+
+                  print("TARGET_RESULT " + json.dumps({
+                      "url": url,
+                      "ok": True,
+                      "title": out.title,
+                      "total": len(out.resources),
+                      "media_count": len(media),
+                      "media": [safe_resource(r) for r in media],
+                      "manga_page_count": len(manga_pages),
+                      "manga_page_numbers": sorted(set(page_numbers)),
+                      "warnings": out.warnings,
+                      "probes": probes,
+                  }, ensure_ascii=False))
 
           asyncio.run(main())
           PY
