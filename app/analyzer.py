@@ -96,6 +96,7 @@ class Analyzer:
                         max_requests=self.config.max_browser_requests,
                         timeout_ms=12_000,
                         interaction_rounds=2,
+                        disable_gpu=self.config.browser_disable_gpu,
                     )
                 )
             except Exception as exc:
@@ -149,6 +150,7 @@ class Analyzer:
                         max_requests=self.config.max_browser_requests,
                         timeout_ms=18_000,
                         interaction_rounds=rounds,
+                        disable_gpu=self.config.browser_disable_gpu,
                     )
                 ),
             ))
