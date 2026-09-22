@@ -178,7 +178,7 @@ async def run_bot() -> None:
         filters,
     )
 
-    defaults = Defaults(parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+    defaults = Defaults(parse_mode=ParseMode.HTML)
     application = Application.builder().token(settings.bot_token).defaults(defaults).build()
 
     def summary_markup(result: AnalyzeResult, key: str):
