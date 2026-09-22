@@ -4,7 +4,7 @@ import asyncio
 import re
 import shutil
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 
@@ -65,6 +65,8 @@ class DownloadEngine:
             if shutil.which("yt-dlp"):
                 return "yt-dlp"
             return "unsupported-stream"
+        if resource.type == ResourceType.IMAGE:
+            return "httpx"
         if shutil.which("aria2c"):
             return "aria2"
         return "httpx"
@@ -72,22 +74,28 @@ class DownloadEngine:
     async def download(self, resource: MediaResource, filename: str | None = None, progress=None) -> Path:
         await validate_public_url(resource.url)
         if resource.drm:
-            raise DownloadRejected("Conteúdo DRM não é baixado pelo Iris")
+            raise DownloadRejected("Conteúdo protegido por DRM não é baixado pelo Iris")
         engine = self.choose_engine(resource)
         target = self.config.downloads_dir / (filename or safe_filename(resource))
+        target.parent.mkdir(parents=True, exist_ok=True)
+
         if engine == "aria2":
-            return await self._aria2(resource, target, progress)
+            try:
+                return await self._aria2(resource, target, progress)
+            except Exception:
+                return await self._httpx(resource, target, progress)
         if engine in {"n_m3u8dl-re", "yt-dlp"}:
             return await self._stream_tool(resource, target, engine, progress)
         if engine == "unsupported-stream":
-            raise DownloadRejected("Stream detectado, mas yt-dlp/N_m3u8DL-RE não está instalado")
+            raise DownloadRejected("Stream detectado, mas não há motor HLS/DASH instalado")
         if engine == "unsupported-ytdlp":
-            raise DownloadRejected("Esse recurso precisa do yt-dlp, que não está instalado")
+            raise DownloadRejected("Esse recurso precisa do yt-dlp")
         return await self._httpx(resource, target, progress)
 
     async def _httpx(self, resource: MediaResource, target: Path, progress=None) -> Path:
         headers = _replay_headers(resource.headers)
-        async with httpx.AsyncClient(timeout=None, follow_redirects=False, trust_env=False, headers=headers, transport=self.transport) as client:
+        timeout = httpx.Timeout(connect=20, read=None, write=30, pool=30)
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False, trust_env=False, headers=headers, transport=self.transport) as client:
             current = resource.url
             for _ in range(self.config.max_redirects + 1):
                 await validate_public_url(current)
@@ -96,7 +104,6 @@ class DownloadEngine:
                         location = response.headers.get("location")
                         if not location:
                             response.raise_for_status()
-                        from urllib.parse import urljoin
                         current = urljoin(current, location)
                         continue
                     response.raise_for_status()
@@ -105,21 +112,37 @@ class DownloadEngine:
                         raise DownloadRejected("Arquivo excede o limite configurado")
                     downloaded = 0
                     temp = target.with_suffix(target.suffix + ".part")
-                    with temp.open("wb") as fh:
-                        async for chunk in response.aiter_bytes(256 * 1024):
-                            downloaded += len(chunk)
-                            if downloaded > self.config.max_download_bytes:
-                                raise DownloadRejected("Arquivo excede o limite configurado")
-                            fh.write(chunk)
-                            if progress:
-                                value = downloaded / total if total else 0.0
-                                await progress(downloaded, total, value)
-                    temp.replace(target)
+                    try:
+                        with temp.open("wb") as fh:
+                            async for chunk in response.aiter_bytes(512 * 1024):
+                                downloaded += len(chunk)
+                                if downloaded > self.config.max_download_bytes:
+                                    raise DownloadRejected("Arquivo excede o limite configurado")
+                                fh.write(chunk)
+                                if progress:
+                                    value = downloaded / total if total else 0.0
+                                    await progress(downloaded, total, value)
+                        temp.replace(target)
+                    except Exception:
+                        temp.unlink(missing_ok=True)
+                        raise
                     return target
             raise DownloadRejected("Muitos redirecionamentos")
 
     async def _aria2(self, resource: MediaResource, target: Path, progress=None) -> Path:
-        cmd = ["aria2c", "--continue=true", "--max-connection-per-server=8", "--split=8", "--min-split-size=1M", "--dir", str(target.parent), "--out", target.name]
+        cmd = [
+            "aria2c",
+            "--continue=true",
+            "--max-connection-per-server=12",
+            "--split=12",
+            "--min-split-size=1M",
+            "--file-allocation=none",
+            "--summary-interval=1",
+            "--dir",
+            str(target.parent),
+            "--out",
+            target.name,
+        ]
         for key, value in _replay_headers(resource.headers).items():
             cmd.extend(["--header", f"{key}: {value}"])
         cmd.append(resource.url)
@@ -132,12 +155,12 @@ class DownloadEngine:
             for key, value in _replay_headers(resource.headers).items():
                 cmd.extend(["--header", f"{key}: {value}"])
         else:
-            cmd = ["yt-dlp", "--no-part", "--no-playlist", "-o", str(target)]
+            cmd = ["yt-dlp", "--no-part", "--no-playlist", "--newline", "-o", str(target)]
             for key, value in _replay_headers(resource.headers).items():
                 cmd.extend(["--add-header", f"{key}:{value}"])
             cmd.append(resource.url)
         await _run(cmd, progress=progress)
-        return target
+        return _resolve_stream_output(target)
 
 
 async def _run(cmd: list[str], progress=None) -> None:
@@ -154,7 +177,7 @@ async def _run(cmd: list[str], progress=None) -> None:
             text = line.decode(errors="replace").strip()
             if capture_errors and text:
                 errors.append(text)
-                if len(errors) > 20:
+                if len(errors) > 30:
                     errors.pop(0)
             if progress:
                 match = re.search(r"(?<![\d.])(100|\d{1,2}(?:\.\d+)?)%", text)
@@ -165,7 +188,17 @@ async def _run(cmd: list[str], progress=None) -> None:
     await asyncio.gather(consume(proc.stdout), consume(proc.stderr, True))
     code = await proc.wait()
     if code != 0:
-        raise RuntimeError("\n".join(errors)[-1000:])
+        raise RuntimeError("\n".join(errors)[-1400:])
+
+
+def _resolve_stream_output(target: Path) -> Path:
+    if target.exists():
+        return target
+    candidates = sorted(target.parent.glob(target.stem + ".*"), key=lambda p: p.stat().st_mtime, reverse=True)
+    for candidate in candidates:
+        if candidate.is_file() and candidate.suffix != ".part":
+            return candidate
+    return target
 
 
 def _int(value: str | None) -> int | None:
