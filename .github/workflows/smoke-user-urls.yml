@@ -1,5 +1,5 @@
 name: User URL smoke test
-# revision 2: DRM visibility and lazy-load viewer interaction
+# revision 3: adaptive lazy-load crawl and content-specific counters
 
 on:
   push:
@@ -58,6 +58,11 @@ jobs:
                   out = await a.analyze(url, deep=deep)
                   counts = Counter(r.type.value for r in out.resources)
                   downloadable = [r for r in out.resources if r.type.value in {"video","audio","stream","playlist","image","document","archive"}]
+                  videos = [r for r in out.resources if r.type.value in {"video","stream","playlist"}]
+                  manga_pages = [
+                      r for r in out.resources
+                      if "/manga_page/" in urlsplit(r.url).path
+                  ]
                   print("IRIS_RESULT " + json.dumps({
                       "url": url,
                       "deep": deep,
@@ -70,6 +75,10 @@ jobs:
                       "downloadable": len(downloadable),
                       "drm_count": sum(1 for r in out.resources if r.drm),
                       "encrypted_count": sum(1 for r in out.resources if r.encrypted),
+                      "video_count": len(videos),
+                      "videos": [compact(r) for r in videos[:10]],
+                      "manga_page_count": len(manga_pages),
+                      "manga_pages": [compact(r) for r in manga_pages[:12]],
                       "warnings": out.warnings,
                       "sample": [compact(r) for r in out.resources[:20]],
                   }, ensure_ascii=False))

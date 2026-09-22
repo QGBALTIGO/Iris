@@ -66,7 +66,7 @@ class Analyzer:
                     final_url,
                     max_requests=self.config.max_browser_requests,
                     timeout_ms=18_000 if deep else 12_000,
-                    interaction_rounds=10 if deep else 2,
+                    interaction_rounds=48 if deep else 2,
                 )
                 resources.extend(browser_resources)
                 if browser_fallback and browser_resources:

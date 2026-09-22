@@ -113,7 +113,9 @@ async def probe_browser(
                 await page.wait_for_load_state("networkidle", timeout=5_000)
 
             rounds = max(0, interaction_rounds)
-            for _ in range(rounds):
+            previous_count = -1
+            stable_rounds = 0
+            for round_index in range(rounds):
                 with suppress(Exception):
                     await page.evaluate(
                         """() => {
@@ -139,8 +141,18 @@ async def probe_browser(
                 with suppress(Exception):
                     await page.wait_for_timeout(350)
                 async with lock:
-                    if len(found) >= max_requests:
+                    current_count = len(found)
+                    if current_count >= max_requests:
                         break
+                if current_count == previous_count:
+                    stable_rounds += 1
+                else:
+                    stable_rounds = 0
+                previous_count = current_count
+                # Stop early on ordinary pages, but allow enough movement to
+                # cross several lazy-load thresholds first.
+                if round_index >= 7 and stable_rounds >= 6:
+                    break
 
             # Catch cached/lazy resources that may not emit a new response callback.
             with suppress(Exception):
