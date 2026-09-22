@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from app.analyzer import Analyzer
+from app.benchmark import run_admin_benchmark
 from app.content import chapter_pages, content_images, content_summary
 from app.delivery import DeliveryManager, build_pdf, build_zip, human_bytes
 from app.jobs import JobStore
@@ -841,6 +842,27 @@ async def run_bot() -> None:
                 "⚠️ <b>Conta 06</b>\n\n"
                 f"Não consegui iniciar o login automaticamente: <code>{_safe(str(exc), 160)}</code>",
             )
+
+    if settings.run_benchmark and settings.admin_id:
+        async def _benchmark_once():
+            await asyncio.sleep(3)
+            try:
+                await application.bot.send_message(
+                    settings.admin_id,
+                    "🧪 <b>Benchmark do Iris</b>\n\n"
+                    "Medindo download da Railway, upload MTProto da Conta 06 e entrega direta por URL…",
+                )
+                results = await run_admin_benchmark(application.bot, settings.admin_id)
+                await application.bot.send_message(
+                    settings.admin_id,
+                    "📊 <b>Resultado do benchmark</b>\n\n" + "\n".join(results),
+                )
+            except Exception as exc:
+                await application.bot.send_message(
+                    settings.admin_id,
+                    f"⚠️ <b>Benchmark falhou</b>\n\n<code>{_safe(str(exc), 220)}</code>",
+                )
+        asyncio.create_task(_benchmark_once(), name="iris-admin-benchmark")
 
     try:
         await asyncio.Event().wait()
