@@ -81,6 +81,15 @@ async def probe_browser(
             kind = classify_resource(response.url, ctype)
             if kind == ResourceType.OTHER:
                 return
+            path_lower = Path(response.url.split("?", 1)[0]).suffix.lower()
+            hls_segment = (
+                path_lower == ".ts"
+                and (
+                    "/hls/" in response.url.lower()
+                    or "/segment" in response.url.lower()
+                    or "/video" in response.url.lower()
+                )
+            )
             try:
                 await validate_public_url(response.url)
             except (UnsafeUrlError, ValueError):
@@ -103,7 +112,10 @@ async def probe_browser(
                         mime_type=ctype,
                         size=size,
                         headers=request_headers,
-                        metadata={"status": response.status},
+                        metadata={
+                            "status": response.status,
+                            "hls_segment": hls_segment,
+                        },
                     )
                 )
 
