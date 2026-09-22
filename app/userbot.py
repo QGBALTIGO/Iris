@@ -42,6 +42,7 @@ class UserbotManager:
                 request_retries=5,
                 retry_delay=1,
                 flood_sleep_threshold=60,
+                entity_cache_limit=10000,
             )
         if not self._client.is_connected():
             await self._client.connect()
@@ -107,31 +108,52 @@ class UserbotManager:
             part for part in [getattr(me, "first_name", None), getattr(me, "last_name", None)] if part
         ).strip()
         username = getattr(me, "username", None)
-        if username:
-            return f"{name or 'Conta 06'} (@{username})"
-        return name or "Conta 06"
+        return f"{name or 'Conta 06'} (@{username})" if username else (name or "Conta 06")
 
-    async def send_file(
+    async def user_id(self) -> int:
+        client = await self.client()
+        me = await client.get_me()
+        return int(me.id)
+
+    async def send_to_bot(
         self,
-        target: int | str,
-        path: Path,
+        bot_username: str,
+        file_or_url: str | Path,
         *,
         caption: str | None = None,
         as_video: bool = False,
         progress_callback=None,
     ):
+        """Upload/send to the bot's private chat.
+
+        This deliberately avoids sending to an arbitrary numeric user ID, which
+        requires an MTProto access_hash. Bot usernames are globally resolvable.
+        The Bot API can then copy the resulting message server-side to the
+        destination chat without a second upload.
+        """
+        if not bot_username:
+            raise RuntimeError("O bot não possui username configurado.")
         async with self._lock:
             client = await self.client()
             if not await client.is_user_authorized():
                 raise RuntimeError("Conta 06 ainda não está autenticada.")
+            target = bot_username if bot_username.startswith("@") else f"@{bot_username}"
             return await client.send_file(
                 target,
-                str(path),
-                caption=caption or path.name,
+                str(file_or_url),
+                caption=caption or "",
                 force_document=not as_video,
                 supports_streaming=as_video,
                 progress_callback=progress_callback,
             )
+
+    async def delete_from_bot_chat(self, bot_username: str, message_id: int) -> None:
+        try:
+            client = await self.client()
+            target = bot_username if bot_username.startswith("@") else f"@{bot_username}"
+            await client.delete_messages(target, [message_id], revoke=True)
+        except Exception:
+            pass
 
     async def close(self) -> None:
         if self._client is not None and self._client.is_connected():
