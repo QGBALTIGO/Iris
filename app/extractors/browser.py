@@ -20,6 +20,7 @@ _KEEP_HEADERS = {
     "accept-language",
     "plus-vw-token",
 }
+_PRIMARY_MEDIA = {ResourceType.VIDEO, ResourceType.AUDIO, ResourceType.PLAYLIST, ResourceType.STREAM}
 
 
 def _useful_headers(headers: dict[str, str]) -> dict[str, str]:
@@ -110,51 +111,61 @@ async def probe_browser(
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
             with suppress(Exception):
-                await page.wait_for_load_state("networkidle", timeout=5_000)
+                await page.wait_for_load_state("networkidle", timeout=2_000)
 
             rounds = max(0, interaction_rounds)
             previous_count = -1
             stable_rounds = 0
+            long_reader = rounds > 24
             for round_index in range(rounds):
                 with suppress(Exception):
                     await page.evaluate(
                         """() => {
-                            const step = Math.max(window.innerHeight * 0.9, 900);
+                            const step = Math.max(window.innerHeight * 1.15, 1000);
                             window.scrollBy(0, step);
                             for (const el of document.querySelectorAll('*')) {
                                 const s = getComputedStyle(el);
                                 if ((s.overflowY === 'auto' || s.overflowY === 'scroll') &&
                                     el.scrollHeight > el.clientHeight + 100) {
-                                    el.scrollTop = Math.min(el.scrollHeight, el.scrollTop + Math.max(el.clientHeight * 0.9, 800));
+                                    el.scrollTop = Math.min(el.scrollHeight, el.scrollTop + Math.max(el.clientHeight * 1.15, 900));
                                 }
                                 if ((s.overflowX === 'auto' || s.overflowX === 'scroll') &&
                                     el.scrollWidth > el.clientWidth + 100) {
-                                    el.scrollLeft = Math.min(el.scrollWidth, el.scrollLeft + Math.max(el.clientWidth * 0.9, 800));
+                                    el.scrollLeft = Math.min(el.scrollWidth, el.scrollLeft + Math.max(el.clientWidth * 1.15, 900));
                                 }
                             }
                         }"""
                     )
                 with suppress(Exception):
-                    await page.mouse.wheel(0, 1800)
+                    await page.mouse.wheel(0, 2200)
                 with suppress(Exception):
                     await page.keyboard.press("PageDown")
                 with suppress(Exception):
-                    await page.wait_for_timeout(350)
+                    await page.wait_for_timeout(180)
+
                 async with lock:
-                    current_count = len(found)
+                    snapshot = list(found)
+                    current_count = len(snapshot)
                     if current_count >= max_requests:
                         break
+
+                # For normal watch pages, once real media appears there is no
+                # benefit in spending several extra seconds scrolling the page.
+                if not long_reader and round_index >= 1 and any(item.type in _PRIMARY_MEDIA for item in snapshot):
+                    break
+
                 if current_count == previous_count:
                     stable_rounds += 1
                 else:
                     stable_rounds = 0
                 previous_count = current_count
-                # Stop early on ordinary pages, but allow enough movement to
-                # cross several lazy-load thresholds first.
-                if round_index >= 7 and stable_rounds >= 6:
+
+                if long_reader:
+                    if round_index >= 12 and stable_rounds >= 8:
+                        break
+                elif round_index >= 4 and stable_rounds >= 3:
                     break
 
-            # Catch cached/lazy resources that may not emit a new response callback.
             with suppress(Exception):
                 extra_urls = await page.evaluate(
                     """() => {
