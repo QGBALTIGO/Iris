@@ -623,13 +623,14 @@ async def run_bot() -> None:
                 paths = _all_completed_paths(job)
                 failed = [item for item in job.items if item.state == JobState.FAILED]
                 delivered: list[Path] = []
+                delivery_error: Exception | None = None
 
                 if paths and job.state != JobState.CANCELLED:
                     try:
                         if bundle_mode == "pdf":
                             out = settings.downloads_dir / f"iris-{job.id}.pdf"
                             build_pdf(paths, out)
-                            channel = await delivery.send_path(
+                            await delivery.send_path(
                                 message,
                                 out,
                                 caption=f"📕 IRIS • {len(paths)} página(s)",
@@ -638,45 +639,45 @@ async def run_bot() -> None:
                         elif bundle_mode == "zip":
                             out = settings.downloads_dir / f"iris-{job.id}.zip"
                             build_zip(paths, out)
-                            channel = await delivery.send_path(
+                            await delivery.send_path(
                                 message,
                                 out,
                                 caption=f"🗜️ IRIS • {len(paths)} arquivo(s)",
                             )
                             delivered = paths + [out]
                         else:
-                            channel = "bot"
                             for path in paths:
-                                channel = await delivery.send_path(
+                                await delivery.send_path(
                                     message,
                                     path,
                                     as_video=delivery_mode == "video",
                                     caption=f"✨ IRIS • {path.name}",
                                 )
                             delivered = paths
-
-                        if channel == "userbot":
-                            await message.reply_text(
-                                "⚡ <b>Enviado pela Conta 06</b>\n\n"
-                                "Usei MTProto para a entrega deste arquivo."
-                            )
                     except Exception as exc:
-                        await message.reply_text(
-                            "⚠️ <b>Falha na entrega</b>\n\n"
-                            f"<code>{_safe(str(exc), 220)}</code>"
-                        )
+                        delivery_error = exc
 
-                if failed:
-                    await message.reply_text(
-                        f"⚠️ <b>Download parcial</b>\n\n"
-                        f"✅ {len(paths)} concluído(s)\n"
-                        f"❌ {len(failed)} falha(s)"
-                    )
-                elif job.state == JobState.COMPLETED:
-                    await message.reply_text(
-                        f"✅ <b>Concluído</b>\n\n"
-                        f"{len(paths)} arquivo(s) processado(s)."
-                    )
+                try:
+                    if delivery_error is not None:
+                        await message.edit_text(
+                            "⚠️ <b>Falha na entrega</b>\n\n"
+                            f"<code>{_safe(str(delivery_error), 220)}</code>"
+                        )
+                    elif failed:
+                        await message.edit_text(
+                            "⚠️ <b>Concluído parcialmente</b>\n\n"
+                            f"✅ {len(paths)} concluído(s)\n"
+                            f"❌ {len(failed)} falha(s)"
+                        )
+                    elif job.state == JobState.CANCELLED:
+                        await message.edit_text("✖️ <b>Download cancelado.</b>")
+                    else:
+                        await message.edit_text(
+                            "✅ <b>Concluído</b>\n\n"
+                            f"📦 {len(paths)} arquivo(s)"
+                        )
+                except Exception:
+                    pass
 
                 await delivery.cleanup(delivered)
                 return
