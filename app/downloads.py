@@ -123,6 +123,11 @@ class DownloadEngine:
                                     value = downloaded / total if total else 0.0
                                     await progress(downloaded, total, value)
                         temp.replace(target)
+                        if resource.type == ResourceType.IMAGE and not _has_valid_image_signature(target):
+                            target.unlink(missing_ok=True)
+                            raise DownloadRejected(
+                                "O site entregou dados de imagem renderizados/obfuscados, não um arquivo de imagem bruto válido"
+                            )
                     except Exception:
                         temp.unlink(missing_ok=True)
                         raise
@@ -199,6 +204,24 @@ def _resolve_stream_output(target: Path) -> Path:
         if candidate.is_file() and candidate.suffix != ".part":
             return candidate
     return target
+
+
+def _has_valid_image_signature(path: Path) -> bool:
+    try:
+        head = path.read_bytes()[:16]
+    except OSError:
+        return False
+    if head.startswith(b"\xff\xd8\xff"):
+        return True
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return True
+    if head.startswith((b"GIF87a", b"GIF89a")):
+        return True
+    if head.startswith(b"RIFF") and len(head) >= 12 and head[8:12] == b"WEBP":
+        return True
+    if head[4:12] in {b"ftypavif", b"ftypavis"}:
+        return True
+    return False
 
 
 def _int(value: str | None) -> int | None:
