@@ -853,6 +853,8 @@ async def run_bot() -> None:
                     "Medindo download da Railway, upload MTProto da Conta 06 e entrega direta por URL…",
                 )
                 results = await run_admin_benchmark(application.bot, settings.admin_id)
+                for line in results:
+                    print("IRIS_BENCHMARK " + line, flush=True)
                 await application.bot.send_message(
                     settings.admin_id,
                     "📊 <b>Resultado do benchmark</b>\n\n" + "\n".join(results),
