@@ -116,6 +116,21 @@ def upload_progress_text(name: str, sent: int, total: int, speed_bps: float = 0.
     ])
 
 
+def delivery_caption(resource: MediaResource | None, *, as_video: bool = False) -> str:
+    title = None
+    quality = None
+    if resource is not None:
+        title = resource.title or resource.metadata.get("page_title")
+        quality = resource.quality or (f"{resource.height}p" if resource.height else None)
+    title = title or ("Vídeo" if as_video else "Arquivo")
+    icon = "🎬" if as_video else "📦"
+    lines = [f"{icon} <b>{_safe(str(title), 220)}</b>"]
+    if quality:
+        lines.append(f"📺 <b>{_safe(str(quality), 30)}</b>")
+    lines.extend(["", "✨ <i>IRIS</i>"])
+    return "\n".join(lines)
+
+
 def deliverable_paths(job: DownloadJob, limit_bytes: int) -> tuple[list[Path], list[Path]]:
     sendable: list[Path] = []
     oversized: list[Path] = []
@@ -703,11 +718,17 @@ async def run_bot() -> None:
                             )
                             delivered = paths + [out]
                         else:
-                            for path in paths:
+                            completed_resources = [
+                                resource
+                                for item, resource in zip(job.items, jobs.resources.get(job_id, []))
+                                if item.state == JobState.COMPLETED and item.output_path
+                            ]
+                            for index, path in enumerate(paths):
+                                resource = completed_resources[index] if index < len(completed_resources) else None
                                 await upload_path_to_telegram(
                                     path,
                                     as_video=delivery_mode == "video",
-                                    caption=f"✨ IRIS • {path.name}",
+                                    caption=delivery_caption(resource, as_video=delivery_mode == "video"),
                                 )
                             delivered = paths
                     except Exception as exc:
@@ -763,7 +784,7 @@ async def run_bot() -> None:
                     query.message,
                     resource,
                     as_video=delivery_mode == "video",
-                    caption="⚡ <b>IRIS</b> • entrega direta",
+                    caption=delivery_caption(resource, as_video=delivery_mode == "video"),
                 )
                 if sent:
                     await query.edit_message_text(
