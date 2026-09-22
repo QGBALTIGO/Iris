@@ -98,6 +98,22 @@ def progress_text(job: DownloadJob, speed_bps: float | None = None) -> str:
     return "\n".join(lines)
 
 
+def deliverable_paths(job: DownloadJob, limit_bytes: int) -> tuple[list[Path], list[Path]]:
+    sendable: list[Path] = []
+    oversized: list[Path] = []
+    for item in job.items:
+        if item.state != JobState.COMPLETED or not item.output_path:
+            continue
+        path = Path(item.output_path)
+        if not path.is_file():
+            continue
+        if path.stat().st_size <= limit_bytes:
+            sendable.append(path)
+        else:
+            oversized.append(path)
+    return sendable, oversized
+
+
 def _analysis_text(result: AnalyzeResult, elapsed: float | None = None) -> str:
     stats = content_summary(result)
     title = _safe(result.title or _domain(result.final_url) or result.final_url, 110)
