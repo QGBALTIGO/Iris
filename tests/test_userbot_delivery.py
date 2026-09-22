@@ -3,20 +3,13 @@ from types import SimpleNamespace
 import pytest
 
 import app.delivery as delivery_module
-from app.delivery import DeliveryManager
+from app.delivery import DeliveryManager, parse_relay_caption
 from app.models import MediaResource, ResourceType
 
 
 class FakeBot:
-    def __init__(self):
-        self.copies = []
-
     async def get_me(self):
         return SimpleNamespace(username="IrisExampleBot")
-
-    async def copy_message(self, **kwargs):
-        self.copies.append(kwargs)
-        return SimpleNamespace(message_id=777)
 
 
 class FakeMessage:
@@ -29,7 +22,7 @@ class FakeMessage:
 
 
 @pytest.mark.asyncio
-async def test_userbot_remote_delivery_relays_through_bot_chat(monkeypatch):
+async def test_userbot_remote_delivery_targets_bot_username_not_peeruser(monkeypatch):
     calls = {}
 
     async def authorized():
@@ -39,30 +32,30 @@ async def test_userbot_remote_delivery_relays_through_bot_chat(monkeypatch):
         calls["send"] = (username, file_or_url, kwargs)
         return SimpleNamespace(id=321)
 
-    async def user_id():
-        return 987654321
-
-    async def delete_from_bot_chat(username, message_id):
-        calls["delete"] = (username, message_id)
-
     monkeypatch.setattr(delivery_module.userbot, "is_authorized", authorized)
     monkeypatch.setattr(delivery_module.userbot, "send_to_bot", send_to_bot)
-    monkeypatch.setattr(delivery_module.userbot, "user_id", user_id)
-    monkeypatch.setattr(delivery_module.userbot, "delete_from_bot_chat", delete_from_bot_chat)
 
     message = FakeMessage()
     resource = MediaResource(
         url="https://cdn.example/video.mp4",
         type=ResourceType.VIDEO,
     )
-    ok = await DeliveryManager().send_remote_resource(message, resource, as_video=True, caption="Teste")
+    ok = await DeliveryManager().send_remote_resource(
+        message,
+        resource,
+        as_video=True,
+        caption="Teste",
+    )
 
     assert ok is True
     assert calls["send"][0] == "IrisExampleBot"
-    assert message.bot.copies == [{
-        "chat_id": 1852596083,
-        "from_chat_id": 987654321,
-        "message_id": 321,
-        "caption": "Teste",
-    }]
-    assert calls["delete"] == ("IrisExampleBot", 321)
+    assert calls["send"][1] == "https://cdn.example/video.mp4"
+    relay = parse_relay_caption(calls["send"][2]["caption"])
+    assert relay == (1852596083, "Teste")
+    assert calls["send"][2]["as_video"] is True
+
+
+def test_relay_caption_rejects_invalid_payload():
+    assert parse_relay_caption(None) is None
+    assert parse_relay_caption("hello") is None
+    assert parse_relay_caption("IRIS_RELAY:not-base64") is None
