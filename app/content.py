@@ -32,7 +32,7 @@ def _page_number(resource: MediaResource) -> int | None:
 def _looks_like_asset(resource: MediaResource) -> bool:
     path = urlsplit(resource.url).path.lower()
     name = Path(path).name
-    if any(word in name or f"/{word}" in path for word in _ASSET_WORDS):
+    if any(word in path or word in name for word in _ASSET_WORDS):
         return True
     if resource.width and resource.height and resource.width <= 160 and resource.height <= 160:
         return True
