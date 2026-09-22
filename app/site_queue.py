@@ -18,6 +18,7 @@ from app.delivery import DeliveryManager
 from app.downloads import DownloadEngine
 from app.models import MediaResource, ResourceType
 from app.settings import settings
+from app.video_candidates import download_first_valid_video
 
 _SITE = "https://pornocomlegenda.blog"
 _VIDEO_TYPES = {ResourceType.VIDEO, ResourceType.PLAYLIST, ResourceType.STREAM}
@@ -659,23 +660,32 @@ class SiteQueueManager:
                     last_error=f"Entrega direta falhou: {type(exc).__name__}: {str(exc)[:220]}",
                 )
 
-        await self._send_local_native(bot, target_chat_id, item, media, caption)
+        await self._send_local_native(bot, target_chat_id, item, result.resources, caption)
 
     async def _send_local_native(
         self,
         bot,
         target_chat_id: int,
         item: QueueItem,
-        media: MediaResource,
+        resources: list[MediaResource],
         caption: str,
     ) -> None:
         path: Path | None = None
         try:
-            path = await self.engine.download(
-                media,
-                filename=None,
+            media, path, generated, info, rejected = await download_first_valid_video(
+                resources,
+                engine=self.engine,
             )
-            self._update_item(item.id, "awaiting_delivery")
+            self._update_item(
+                item.id,
+                "awaiting_delivery",
+                media_url=media.url,
+                media_source=media.source,
+                last_error=(
+                    "Candidatos rejeitados: " + " | ".join(rejected[-3:])
+                    if rejected else None
+                ),
+            )
             await self.delivery.send_path_to_chat(
                 bot,
                 target_chat_id,
