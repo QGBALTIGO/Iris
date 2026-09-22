@@ -83,6 +83,8 @@ async def download_first_valid_video(
                 path.unlink(missing_ok=True)
                 continue
 
+            if generated and normalized != path:
+                path.unlink(missing_ok=True)
             return resource, normalized, generated, normalized_info, errors
         except Exception as exc:
             errors.append(
