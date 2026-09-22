@@ -60,13 +60,33 @@ def _domain(url: str) -> str:
     return urlsplit(url).netloc.removeprefix("www.")
 
 
+def _video_resource_rank(resource: MediaResource) -> tuple:
+    path = urlsplit(resource.url).path.lower()
+    mime = (resource.mime_type or "").lower()
+    direct_mp4 = path.endswith(".mp4") or "video/mp4" in mime
+    network = resource.source.startswith("browser:network")
+    direct_video = resource.type == ResourceType.VIDEO
+    ytdlp = resource.metadata.get("engine") == "yt-dlp"
+    return (
+        0 if direct_mp4 else 1,
+        0 if network else 1,
+        0 if direct_video else 1,
+        1 if ytdlp else 0,
+        -(resource.height or 0),
+        resource.url,
+    )
+
+
 def resources_for_bucket(result: AnalyzeResult, bucket: str) -> list[MediaResource]:
     if bucket == "p":
         return chapter_pages(result)
     if bucket == "i":
         return content_images(result)
     kinds = _BUCKET_TYPES.get(bucket, set())
-    return [resource for resource in result.resources if resource.type in kinds]
+    resources = [resource for resource in result.resources if resource.type in kinds]
+    if bucket == "v":
+        resources.sort(key=_video_resource_rank)
+    return resources
 
 
 def needs_deep_analysis(result: AnalyzeResult) -> bool:
