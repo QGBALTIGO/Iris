@@ -5,7 +5,7 @@ from pathlib import Path
 
 from app.fast_mtproto import upload_path
 from app.settings import Settings, settings
-from app.video_tools import ensure_faststart, make_thumbnail, probe_video
+from app.video_tools import make_thumbnail, normalize_video_mp4, probe_video
 
 
 class UserbotManager:
@@ -142,19 +142,21 @@ class UserbotManager:
             target = bot_username if bot_username.startswith("@") else f"@{bot_username}"
             payload = file_or_url
             path = Path(file_or_url) if isinstance(file_or_url, (str, Path)) else None
+            upload_path_value: Path | None = path if path is not None and path.is_file() else None
+            generated_mp4 = False
             thumb: Path | None = None
             attributes = None
             mime_type = None
 
-            if path is not None and path.is_file():
+            if upload_path_value is not None:
                 if as_video:
                     from telethon.tl.types import DocumentAttributeVideo  # type: ignore
 
-                    await ensure_faststart(path)
-                    info = await probe_video(path)
-                    thumb = path.with_name(f".{path.stem}.thumb.jpg")
+                    upload_path_value, generated_mp4 = await normalize_video_mp4(upload_path_value)
+                    info = await probe_video(upload_path_value)
+                    thumb = upload_path_value.with_name(f".{upload_path_value.stem}.thumb.jpg")
                     try:
-                        await make_thumbnail(path, thumb, second=1.0)
+                        await make_thumbnail(upload_path_value, thumb, second=1.0)
                     except Exception:
                         thumb = None
                     attributes = [
@@ -165,14 +167,9 @@ class UserbotManager:
                             supports_streaming=True,
                         )
                     ]
-                    suffix = path.suffix.lower()
-                    mime_type = "video/mp4" if suffix in {".mp4", ".m4v"} else (
-                        "video/quicktime" if suffix == ".mov" else (
-                            "video/webm" if suffix == ".webm" else "video/x-matroska"
-                        )
-                    )
+                    mime_type = "video/mp4"
 
-                payload = await upload_path(client, path, progress_callback=progress_callback)
+                payload = await upload_path(client, upload_path_value, progress_callback=progress_callback)
 
             try:
                 return await client.send_file(
@@ -184,11 +181,13 @@ class UserbotManager:
                     attributes=attributes,
                     thumb=str(thumb) if thumb and thumb.exists() else None,
                     mime_type=mime_type,
-                    progress_callback=progress_callback if path is None or not path.is_file() else None,
+                    progress_callback=progress_callback if upload_path_value is None else None,
                 )
             finally:
                 if thumb:
                     thumb.unlink(missing_ok=True)
+                if generated_mp4 and upload_path_value:
+                    upload_path_value.unlink(missing_ok=True)
 
     async def delete_from_bot_chat(self, bot_username: str, message_id: int) -> None:
         try:
