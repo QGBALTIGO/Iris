@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import asyncio
 import shutil
 import zipfile
 from pathlib import Path
 
 from app.settings import Settings, settings
+from app.userbot import userbot
 
 _VIDEO_EXT = {".mp4", ".mkv", ".webm", ".mov", ".m4v"}
 
@@ -45,68 +45,60 @@ def build_pdf(paths: list[Path], output: Path) -> Path:
 class DeliveryManager:
     def __init__(self, config: Settings = settings):
         self.config = config
-        self._userbot_lock = asyncio.Lock()
 
     @property
     def userbot_configured(self) -> bool:
-        return bool(
-            self.config.telegram_api_id
-            and self.config.telegram_api_hash
-            and self.config.telegram_session
-        )
+        return userbot.configured
+
+    async def userbot_ready(self) -> bool:
+        return await userbot.is_authorized()
 
     async def send_path(self, message, path: Path, *, as_video: bool = False, caption: str | None = None) -> str:
         if not path.is_file():
             raise FileNotFoundError(path)
+
         size = path.stat().st_size
+        prefer_userbot = size >= self.config.userbot_threshold_bytes
+        ready = await userbot.is_authorized() if userbot.configured else False
+
+        if prefer_userbot and ready:
+            target = self.config.admin_id or message.chat_id
+            await userbot.send_file(
+                target,
+                path,
+                caption=caption,
+                as_video=as_video and path.suffix.lower() in _VIDEO_EXT,
+            )
+            return "userbot"
+
         if size <= self.config.bot_upload_limit_bytes:
             from telegram import InputFile
+
             with path.open("rb") as fh:
                 payload = InputFile(fh, filename=path.name)
                 if as_video and path.suffix.lower() in _VIDEO_EXT:
-                    await message.reply_video(video=payload, caption=caption, supports_streaming=True)
+                    await message.reply_video(
+                        video=payload,
+                        caption=caption,
+                        supports_streaming=True,
+                    )
                     return "bot:video"
                 await message.reply_document(document=payload, caption=caption)
                 return "bot:file"
-        if self.userbot_configured:
-            await self._send_userbot(path, caption=caption, as_video=as_video)
-            await message.reply_text(
-                f"Arquivo grande enviado pelo userbot: {path.name} · {human_bytes(size)}"
+
+        if ready:
+            target = self.config.admin_id or message.chat_id
+            await userbot.send_file(
+                target,
+                path,
+                caption=caption,
+                as_video=as_video and path.suffix.lower() in _VIDEO_EXT,
             )
             return "userbot"
-        await message.reply_text(
-            f"Download concluído: {path.name} · {human_bytes(size)}\n"
-            "O arquivo excede o limite configurado do bot. Configure o userbot para entrega de arquivos grandes."
+
+        raise RuntimeError(
+            "Arquivo acima do limite do Bot API e a Conta 06 ainda não está autenticada."
         )
-        return "server"
-
-    async def _send_userbot(self, path: Path, caption: str | None = None, as_video: bool = False) -> None:
-        from telethon import TelegramClient  # type: ignore
-        from telethon.sessions import StringSession  # type: ignore
-
-        async with self._userbot_lock:
-            client = TelegramClient(
-                StringSession(self.config.telegram_session),
-                int(self.config.telegram_api_id),
-                str(self.config.telegram_api_hash),
-            )
-            await client.connect()
-            try:
-                if not await client.is_user_authorized():
-                    raise RuntimeError("Sessão do userbot não está autorizada")
-                me = await client.get_me()
-                target = "me" if self.config.admin_id and getattr(me, "id", None) == self.config.admin_id else self.config.admin_id
-                if not target:
-                    raise RuntimeError("IRIS_ADMIN_ID não configurado")
-                await client.send_file(
-                    target,
-                    str(path),
-                    caption=caption or path.name,
-                    force_document=not as_video,
-                    supports_streaming=as_video,
-                )
-            finally:
-                await client.disconnect()
 
     async def cleanup(self, paths: list[Path]) -> None:
         if not self.config.cleanup_after_delivery:
