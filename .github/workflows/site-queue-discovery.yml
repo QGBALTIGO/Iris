@@ -1,4 +1,5 @@
 name: Site queue discovery
+# merged source discovery
 
 on:
   push:
