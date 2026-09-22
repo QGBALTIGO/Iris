@@ -60,7 +60,7 @@ async def download_first_valid_video(
         and not r.metadata.get("hls_segment")
         and not (
             r.source.startswith("browser:")
-            and __import__("urllib.parse").parse.urlsplit(r.url).path.lower().endswith(".ts")
+            and urlsplit(r.url).path.lower().endswith(".ts")
         )
     ]
     candidates.sort(key=video_candidate_rank)
