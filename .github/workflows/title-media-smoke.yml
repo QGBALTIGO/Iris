@@ -1,0 +1,64 @@
+name: Title media smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/title-media-smoke.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      - run: python -m playwright install --with-deps chromium
+      - name: Validate title and media
+        env:
+          IRIS_DOWNLOADS_DIR: /tmp/iris-title-smoke
+        run: |
+          python - <<'PY'
+          import asyncio, json, time
+          from app.analyzer import Analyzer
+          from app.bot import delivery_caption
+          from app.downloads import safe_filename
+          from app.models import ResourceType
+
+          URL = "https://pornocomlegenda.blog/safada-fudeu-com-meio-irmao-e-depois-com-a-esposa-dele-incesto-legendado/#_"
+
+          async def main():
+              started = time.monotonic()
+              result = await Analyzer().analyze(URL, deep=True)
+              media = [
+                  r for r in result.resources
+                  if r.type in {ResourceType.VIDEO, ResourceType.PLAYLIST, ResourceType.STREAM}
+                  and not r.drm
+              ]
+              payload = {
+                  "title": result.title,
+                  "seconds": round(time.monotonic() - started, 3),
+                  "media_count": len(media),
+                  "media": [
+                      {
+                          "title": r.title,
+                          "source": r.source,
+                          "url": r.url,
+                          "filename": safe_filename(r),
+                          "caption": delivery_caption(r, as_video=True),
+                      }
+                      for r in media[:3]
+                  ],
+              }
+              print("TITLE_SMOKE " + json.dumps(payload, ensure_ascii=False))
+              assert result.title
+              assert media
+              assert all((r.title or r.metadata.get("page_title")) for r in media)
+              assert all("%20" not in safe_filename(r) for r in media)
+
+          asyncio.run(main())
+          PY
