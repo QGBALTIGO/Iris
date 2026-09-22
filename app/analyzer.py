@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import httpx
+
 from app.dedup import deduplicate
 from app.extractors.browser import probe_browser
 from app.extractors.dash import inspect_mpd
@@ -17,33 +19,75 @@ class Analyzer:
         self.fetcher = fetcher or SafeFetcher(config)
 
     async def analyze(self, url: str, deep: bool = False) -> AnalyzeResult:
-        page = await self.fetcher.fetch(url)
-        ctype = (page.content_type or "").lower()
         title = None
+        content_type = None
+        final_url = str(url)
         resources: list[MediaResource] = []
         warnings: list[str] = []
+        page = None
+        blocked_status: int | None = None
 
-        if "text/html" in ctype or page.body.lstrip().startswith((b"<!DOCTYPE html", b"<html", b"<HTML")):
-            html = page.body.decode(_charset(ctype), errors="replace")
-            title, resources = extract_html_resources(html, page.url)
-        else:
-            from app.classifier import classify_resource
-            resources.append(MediaResource(url=page.url, type=classify_resource(page.url, ctype), source="direct", mime_type=page.content_type, size=page.content_length))
+        try:
+            page = await self.fetcher.fetch(url)
+        except httpx.HTTPStatusError as exc:
+            blocked_status = exc.response.status_code
+            warnings.append(f"HTTP inicial retornou {blocked_status}; tentando navegador/extratores alternativos.")
+        except Exception as exc:
+            if not deep:
+                raise
+            warnings.append(f"HTTP inicial falhou: {type(exc).__name__}")
+
+        if page is not None:
+            final_url = page.url
+            content_type = page.content_type
+            ctype = (page.content_type or "").lower()
+            if "text/html" in ctype or page.body.lstrip().startswith((b"<!DOCTYPE html", b"<html", b"<HTML")):
+                html = page.body.decode(_charset(ctype), errors="replace")
+                title, resources = extract_html_resources(html, page.url)
+            else:
+                from app.classifier import classify_resource
+                resources.append(
+                    MediaResource(
+                        url=page.url,
+                        type=classify_resource(page.url, ctype),
+                        source="direct",
+                        mime_type=page.content_type,
+                        size=page.content_length,
+                    )
+                )
 
         resources = deduplicate(resources)
         await self._inspect_manifests(resources, warnings)
 
-        if deep and self.config.ytdlp_enabled:
-            resources.extend(await probe_ytdlp(page.url))
-        if deep and self.config.browser_enabled:
+        # If a normal request is blocked, a real browser gets one chance even in quick mode.
+        browser_fallback = blocked_status in {401, 403, 429}
+        if self.config.browser_enabled and (deep or browser_fallback):
             try:
-                resources.extend(await probe_browser(page.url, max_requests=self.config.max_browser_requests))
+                browser_resources = await probe_browser(
+                    final_url,
+                    max_requests=self.config.max_browser_requests,
+                    timeout_ms=18_000 if deep else 12_000,
+                )
+                resources.extend(browser_resources)
+                if browser_fallback and browser_resources:
+                    warnings.append("A página bloqueou HTTP simples, mas o navegador conseguiu observar recursos.")
             except Exception as exc:
                 warnings.append(f"Browser profundo indisponível: {type(exc).__name__}")
 
+        if deep and self.config.ytdlp_enabled:
+            resources.extend(await probe_ytdlp(final_url))
+
         resources = [r for r in deduplicate(resources) if not r.metadata.get("navigation_only")]
         await self._inspect_manifests(resources, warnings)
-        return AnalyzeResult(url=str(url), final_url=page.url, title=title, content_type=page.content_type, resources=resources, warnings=warnings)
+
+        return AnalyzeResult(
+            url=str(url),
+            final_url=final_url,
+            title=title,
+            content_type=content_type,
+            resources=resources,
+            warnings=warnings,
+        )
 
     async def _inspect_manifests(self, resources: list[MediaResource], warnings: list[str]) -> None:
         candidates = [r for r in resources if r.type == ResourceType.PLAYLIST][: self.config.max_manifest_probes]
@@ -51,7 +95,11 @@ class Analyzer:
             if resource.variants or resource.drm:
                 continue
             try:
-                result = await self.fetcher.fetch(resource.url, max_bytes=2 * 1024 * 1024)
+                result = await self.fetcher.fetch(
+                    resource.url,
+                    max_bytes=2 * 1024 * 1024,
+                    headers=resource.headers,
+                )
             except Exception:
                 continue
             text = result.body.decode("utf-8", errors="replace")

@@ -24,15 +24,26 @@ class SafeFetcher:
         self.config = config
         self.transport = transport
 
-    async def fetch(self, url: str, max_bytes: int | None = None) -> FetchResult:
+    async def fetch(
+        self,
+        url: str,
+        max_bytes: int | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> FetchResult:
         limit = max_bytes or self.config.max_html_bytes
         current = str(url)
+        request_headers = {
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+            "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+        }
+        if headers:
+            request_headers.update(headers)
         async with httpx.AsyncClient(
             timeout=self.config.request_timeout,
             follow_redirects=False,
             trust_env=False,
             transport=self.transport,
-            headers={"User-Agent": "Iris/0.1 (+https://github.com/QGBALTIGO/Iris)"},
+            headers=request_headers,
         ) as client:
             for _ in range(self.config.max_redirects + 1):
                 await validate_public_url(current)

@@ -17,6 +17,26 @@ class DownloadRejected(ValueError):
     pass
 
 
+_ALLOWED_REPLAY_HEADERS = {
+    "referer",
+    "user-agent",
+    "origin",
+    "authorization",
+    "cookie",
+    "accept",
+    "accept-language",
+    "plus-vw-token",
+}
+
+
+def _replay_headers(headers: dict[str, str]) -> dict[str, str]:
+    return {
+        key: value
+        for key, value in headers.items()
+        if key.lower() in _ALLOWED_REPLAY_HEADERS or key.lower().startswith("x-")
+    }
+
+
 def safe_filename(resource: MediaResource, index: int = 1) -> str:
     raw = resource.title or Path(urlsplit(resource.url).path).name or f"download-{index}"
     raw = re.sub(r"[^\w.()\[\] -]+", "_", raw, flags=re.UNICODE).strip(" ._")
@@ -66,7 +86,7 @@ class DownloadEngine:
         return await self._httpx(resource, target, progress)
 
     async def _httpx(self, resource: MediaResource, target: Path, progress=None) -> Path:
-        headers = {k: v for k, v in resource.headers.items() if k.lower() in {"referer", "user-agent", "cookie", "authorization"}}
+        headers = _replay_headers(resource.headers)
         async with httpx.AsyncClient(timeout=None, follow_redirects=False, trust_env=False, headers=headers, transport=self.transport) as client:
             current = resource.url
             for _ in range(self.config.max_redirects + 1):
@@ -100,9 +120,8 @@ class DownloadEngine:
 
     async def _aria2(self, resource: MediaResource, target: Path, progress=None) -> Path:
         cmd = ["aria2c", "--continue=true", "--max-connection-per-server=8", "--split=8", "--min-split-size=1M", "--dir", str(target.parent), "--out", target.name]
-        for key, value in resource.headers.items():
-            if key.lower() in {"referer", "user-agent", "cookie", "authorization"}:
-                cmd.extend(["--header", f"{key}: {value}"])
+        for key, value in _replay_headers(resource.headers).items():
+            cmd.extend(["--header", f"{key}: {value}"])
         cmd.append(resource.url)
         await _run(cmd, progress=progress)
         return target
@@ -110,8 +129,13 @@ class DownloadEngine:
     async def _stream_tool(self, resource: MediaResource, target: Path, engine: str, progress=None) -> Path:
         if engine == "n_m3u8dl-re":
             cmd = ["N_m3u8DL-RE", resource.url, "--save-dir", str(target.parent), "--save-name", target.stem, "--auto-select"]
+            for key, value in _replay_headers(resource.headers).items():
+                cmd.extend(["--header", f"{key}: {value}"])
         else:
-            cmd = ["yt-dlp", "--no-part", "--no-playlist", "-o", str(target), resource.url]
+            cmd = ["yt-dlp", "--no-part", "--no-playlist", "-o", str(target)]
+            for key, value in _replay_headers(resource.headers).items():
+                cmd.extend(["--add-header", f"{key}:{value}"])
+            cmd.append(resource.url)
         await _run(cmd, progress=progress)
         return target
 

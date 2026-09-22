@@ -9,6 +9,27 @@ from app.models import MediaResource, ResourceType
 from app.security import UnsafeUrlError, validate_public_url
 
 
+_BROWSER_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+_KEEP_HEADERS = {
+    "referer",
+    "user-agent",
+    "origin",
+    "authorization",
+    "cookie",
+    "accept",
+    "accept-language",
+    "plus-vw-token",
+}
+
+
+def _useful_headers(headers: dict[str, str]) -> dict[str, str]:
+    return {
+        key: value
+        for key, value in headers.items()
+        if key.lower() in _KEEP_HEADERS or key.lower().startswith("x-")
+    }
+
+
 async def probe_browser(url: str, timeout_ms: int = 18_000, max_requests: int = 1200) -> list[MediaResource]:
     try:
         from playwright.async_api import async_playwright
@@ -26,7 +47,13 @@ async def probe_browser(url: str, timeout_ms: int = 18_000, max_requests: int = 
             if not executable.exists():
                 raise
             browser = await p.chromium.launch(headless=True, executable_path=str(executable))
-        context = await browser.new_context(ignore_https_errors=False)
+        context = await browser.new_context(
+            ignore_https_errors=False,
+            user_agent=_BROWSER_UA,
+            locale="pt-BR",
+            extra_http_headers={"Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8"},
+            viewport={"width": 1365, "height": 900},
+        )
         page = await context.new_page()
 
         async def guard(route):
@@ -57,6 +84,10 @@ async def probe_browser(url: str, timeout_ms: int = 18_000, max_requests: int = 
                 size = int(response.headers.get("content-length", ""))
             except ValueError:
                 pass
+            try:
+                request_headers = _useful_headers(await response.request.all_headers())
+            except Exception:
+                request_headers = {"referer": page.url} if page.url else {}
             async with lock:
                 found.append(
                     MediaResource(
@@ -65,7 +96,8 @@ async def probe_browser(url: str, timeout_ms: int = 18_000, max_requests: int = 
                         source="browser:network",
                         mime_type=ctype,
                         size=size,
-                        headers={"referer": page.url} if page.url else {},
+                        headers=request_headers,
+                        metadata={"status": response.status},
                     )
                 )
 
@@ -76,7 +108,7 @@ async def probe_browser(url: str, timeout_ms: int = 18_000, max_requests: int = 
                 await page.wait_for_load_state("networkidle", timeout=5_000)
             with suppress(Exception):
                 await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                await page.wait_for_timeout(800)
+                await page.wait_for_timeout(1200)
         finally:
             await context.close()
             await browser.close()
