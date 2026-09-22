@@ -27,25 +27,56 @@ def human_bytes(value: int | None) -> str:
     return f"{size:.1f} TB"
 
 
-def relay_caption(chat_id: int, caption: str | None = None) -> str:
-    payload = json.dumps(
-        {"chat_id": int(chat_id), "caption": (caption or "")[:650]},
-        ensure_ascii=False,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    encoded = base64.urlsafe_b64encode(payload).decode("ascii")
+def relay_caption(
+    chat_id: int,
+    caption: str | None = None,
+    *,
+    queue_item_id: int | None = None,
+    expected_kind: str | None = None,
+) -> str:
+    payload = {
+        "chat_id": int(chat_id),
+        "caption": (caption or "")[:650],
+    }
+    if queue_item_id is not None:
+        payload["queue_item_id"] = int(queue_item_id)
+    if expected_kind:
+        payload["expected_kind"] = str(expected_kind)
+    encoded = base64.urlsafe_b64encode(
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    ).decode("ascii")
     return _RELAY_PREFIX + encoded
 
 
-def parse_relay_caption(value: str | None) -> tuple[int, str] | None:
+def parse_relay_payload(value: str | None) -> dict[str, object] | None:
     if not value or not value.startswith(_RELAY_PREFIX):
         return None
     try:
         raw = base64.urlsafe_b64decode(value[len(_RELAY_PREFIX):].encode("ascii"))
         data = json.loads(raw.decode("utf-8"))
-        return int(data["chat_id"]), str(data.get("caption") or "")
+        return {
+            "chat_id": int(data["chat_id"]),
+            "caption": str(data.get("caption") or ""),
+            "queue_item_id": (
+                int(data["queue_item_id"])
+                if data.get("queue_item_id") is not None
+                else None
+            ),
+            "expected_kind": (
+                str(data["expected_kind"])
+                if data.get("expected_kind")
+                else None
+            ),
+        }
     except Exception:
         return None
+
+
+def parse_relay_caption(value: str | None) -> tuple[int, str] | None:
+    payload = parse_relay_payload(value)
+    if not payload:
+        return None
+    return int(payload["chat_id"]), str(payload["caption"])
 
 
 def build_zip(paths: list[Path], output: Path) -> Path:
@@ -79,6 +110,33 @@ class DeliveryManager:
     async def userbot_ready(self) -> bool:
         return await userbot.is_authorized()
 
+    async def _send_to_bot_target(
+        self,
+        bot,
+        chat_id: int,
+        file_or_url: str | Path,
+        *,
+        caption: str | None = None,
+        as_video: bool = False,
+        queue_item_id: int | None = None,
+        progress_callback=None,
+    ) -> None:
+        me = await bot.get_me()
+        if not me.username:
+            raise RuntimeError("O bot não possui username público.")
+        await userbot.send_to_bot(
+            me.username,
+            file_or_url,
+            caption=relay_caption(
+                chat_id,
+                caption,
+                queue_item_id=queue_item_id,
+                expected_kind="video" if as_video else None,
+            ),
+            as_video=as_video,
+            progress_callback=progress_callback,
+        )
+
     async def _send_via_userbot(
         self,
         message,
@@ -88,19 +146,60 @@ class DeliveryManager:
         as_video: bool = False,
         progress_callback=None,
     ) -> None:
-        bot = message.get_bot()
-        me = await bot.get_me()
-        if not me.username:
-            raise RuntimeError("O bot não possui username público.")
-        await userbot.send_to_bot(
-            me.username,
+        await self._send_to_bot_target(
+            message.get_bot(),
+            message.chat_id,
             file_or_url,
-            caption=relay_caption(message.chat_id, caption),
+            caption=caption,
             as_video=as_video,
             progress_callback=progress_callback,
         )
-        # The bot's normal update loop receives this message from Account 06.
-        # It then copies it server-side using the Bot API message_id it sees.
+
+    async def send_resource_to_chat(
+        self,
+        bot,
+        chat_id: int,
+        resource: MediaResource,
+        *,
+        caption: str | None = None,
+        queue_item_id: int | None = None,
+        as_video: bool = True,
+    ) -> None:
+        if not await userbot.is_authorized():
+            raise RuntimeError("Conta 06 não autenticada.")
+        await self._send_to_bot_target(
+            bot,
+            chat_id,
+            resource.url,
+            caption=caption,
+            as_video=as_video and resource.type == ResourceType.VIDEO,
+            queue_item_id=queue_item_id,
+        )
+
+    async def send_path_to_chat(
+        self,
+        bot,
+        chat_id: int,
+        path: Path,
+        *,
+        caption: str | None = None,
+        queue_item_id: int | None = None,
+        as_video: bool = False,
+        progress_callback=None,
+    ) -> None:
+        if not path.is_file():
+            raise FileNotFoundError(path)
+        if not await userbot.is_authorized():
+            raise RuntimeError("Conta 06 não autenticada.")
+        await self._send_to_bot_target(
+            bot,
+            chat_id,
+            path,
+            caption=caption,
+            as_video=as_video and path.suffix.lower() in _VIDEO_EXT,
+            queue_item_id=queue_item_id,
+            progress_callback=progress_callback,
+        )
 
     async def send_remote_resource(
         self,
