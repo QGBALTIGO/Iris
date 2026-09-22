@@ -11,8 +11,6 @@ _IMAGE_CODECS = {"gif", "png", "apng", "bmp", "webp"}
 
 
 def video_candidate_rank(resource: MediaResource) -> tuple:
-    from urllib.parse import urlsplit
-
     path = urlsplit(resource.url).path.lower()
     mime = (resource.mime_type or "").lower()
     direct_mp4 = path.endswith(".mp4") or "video/mp4" in mime
