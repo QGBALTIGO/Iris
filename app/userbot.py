@@ -136,3 +136,6 @@ class UserbotManager:
     async def close(self) -> None:
         if self._client is not None and self._client.is_connected():
             await self._client.disconnect()
+
+
+userbot = UserbotManager()
