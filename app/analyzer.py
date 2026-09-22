@@ -81,6 +81,7 @@ class Analyzer:
 
         resources = [r for r in deduplicate(resources) if not r.metadata.get("navigation_only")]
         annotate_content_roles(resources)
+        await self._annotate_chapter_exportability(resources, warnings)
         await self._inspect_manifests(resources, warnings)
 
         if any(item.drm for item in resources):
@@ -125,6 +126,35 @@ class Analyzer:
                 continue
             resources.extend(result)
 
+    async def _annotate_chapter_exportability(
+        self,
+        resources: list[MediaResource],
+        warnings: list[str],
+    ) -> None:
+        pages = [r for r in resources if r.metadata.get("role") == "chapter_page"]
+        if not pages:
+            return
+
+        probe = pages[0]
+        try:
+            result = await self.fetcher.fetch(
+                probe.url,
+                max_bytes=2 * 1024 * 1024,
+                headers=probe.headers,
+            )
+        except Exception:
+            return
+
+        raw_downloadable = _valid_image_payload(result.body)
+        for page in pages:
+            page.metadata["raw_downloadable"] = raw_downloadable
+
+        if not raw_downloadable:
+            warnings.append(
+                "As páginas foram localizadas, mas o leitor entrega dados renderizados/obfuscados; "
+                "exportação direta e PDF foram desativados para evitar arquivos corrompidos."
+            )
+
     async def _inspect_manifests(self, resources: list[MediaResource], warnings: list[str]) -> None:
         candidates = [r for r in resources if r.type == ResourceType.PLAYLIST][: self.config.max_manifest_probes]
         for resource in candidates:
@@ -151,6 +181,21 @@ class Analyzer:
                 resource.drm = drm
             if resource.drm:
                 warnings.append("Uma playlist protegida por DRM foi detectada.")
+
+
+def _valid_image_payload(data: bytes) -> bool:
+    head = data[:16]
+    if head.startswith(b"\xff\xd8\xff"):
+        return True
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return True
+    if head.startswith((b"GIF87a", b"GIF89a")):
+        return True
+    if head.startswith(b"RIFF") and len(head) >= 12 and head[8:12] == b"WEBP":
+        return True
+    if len(head) >= 12 and head[4:12] in {b"ftypavif", b"ftypavis"}:
+        return True
+    return False
 
 
 def _charset(content_type: str) -> str:
