@@ -31,6 +31,7 @@ class Settings:
 
     public_enabled: bool = _bool("IRIS_PUBLIC_ENABLED", False)
     browser_enabled: bool = _bool("IRIS_BROWSER_ENABLED", True)
+    browser_disable_gpu: bool = _bool("IRIS_BROWSER_DISABLE_GPU", False)
     ytdlp_enabled: bool = _bool("IRIS_YTDLP_ENABLED", True)
     max_redirects: int = int(os.getenv("IRIS_MAX_REDIRECTS", "5"))
     request_timeout: float = float(os.getenv("IRIS_REQUEST_TIMEOUT", "20"))
