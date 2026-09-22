@@ -3,18 +3,21 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
+from pathlib import Path
+from urllib.parse import urlsplit
 
 from app.downloads import DownloadEngine
 from app.models import DownloadItemStatus, DownloadJob, JobState, MediaResource
+from app.settings import settings
 
 
 class JobStore:
-    def __init__(self, engine: DownloadEngine | None = None, concurrency: int = 2):
+    def __init__(self, engine: DownloadEngine | None = None, concurrency: int | None = None):
         self.engine = engine or DownloadEngine()
         self.jobs: dict[str, DownloadJob] = {}
         self.resources: dict[str, list[MediaResource]] = {}
         self.tasks: dict[str, asyncio.Task] = {}
-        self.semaphore = asyncio.Semaphore(concurrency)
+        self.semaphore = asyncio.Semaphore(concurrency or settings.download_concurrency)
 
     def create(self, resources: list[MediaResource]) -> DownloadJob:
         now = time.time()
@@ -52,9 +55,10 @@ class JobStore:
                 item.progress = value
                 job.updated_at = time.time()
 
+            filename = _stable_filename(resource, index)
             try:
                 async with self.semaphore:
-                    output = await self.engine.download(resource, progress=progress)
+                    output = await self.engine.download(resource, filename=filename, progress=progress)
                 item.output_path = str(output)
                 item.progress = 1.0
                 item.state = JobState.COMPLETED
@@ -96,3 +100,11 @@ class JobStore:
 
     def list(self) -> list[DownloadJob]:
         return sorted(self.jobs.values(), key=lambda j: j.created_at, reverse=True)
+
+
+def _stable_filename(resource: MediaResource, index: int) -> str | None:
+    page = resource.metadata.get("page_number")
+    if page is not None:
+        suffix = Path(urlsplit(resource.url).path).suffix or ".jpg"
+        return f"{int(page):03d}{suffix.lower()}"
+    return None
