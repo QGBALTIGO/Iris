@@ -1,0 +1,61 @@
+name: Site queue discovery
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/site-queue-discovery.yml"
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      - name: Discover full site catalogue
+        env:
+          IRIS_DOWNLOADS_DIR: /tmp/iris-queue-smoke
+        run: |
+          python - <<'PY'
+          import asyncio, json
+          from pathlib import Path
+          from app.site_queue import SiteQueueManager
+
+          async def main():
+              manager = SiteQueueManager(Path("/tmp/iris-site-queue.sqlite3"))
+              stats = await manager.discover()
+              status = manager.status()
+              with manager._connect() as db:
+                  rows = db.execute(
+                      """
+                      SELECT id, url, title, published_at
+                      FROM queue_items
+                      ORDER BY published_at DESC, id ASC
+                      LIMIT 5
+                      """
+                  ).fetchall()
+                  duplicates = db.execute(
+                      """
+                      SELECT COUNT(*) FROM (
+                          SELECT url, COUNT(*) c
+                          FROM queue_items
+                          GROUP BY url HAVING c > 1
+                      )
+                      """
+                  ).fetchone()[0]
+              print("QUEUE_DISCOVERY " + json.dumps({
+                  "stats": stats,
+                  "status": status,
+                  "samples": [dict(r) for r in rows],
+                  "duplicates": duplicates,
+              }, ensure_ascii=False))
+              assert stats["total"] >= 900
+              assert duplicates == 0
+
+          asyncio.run(main())
+          PY
