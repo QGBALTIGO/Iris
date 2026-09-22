@@ -86,6 +86,7 @@ class DeliveryManager:
         *,
         caption: str | None = None,
         as_video: bool = False,
+        progress_callback=None,
     ) -> None:
         bot = message.get_bot()
         me = await bot.get_me()
@@ -96,6 +97,7 @@ class DeliveryManager:
             file_or_url,
             caption=relay_caption(message.chat_id, caption),
             as_video=as_video,
+            progress_callback=progress_callback,
         )
         # The bot's normal update loop receives this message from Account 06.
         # It then copies it server-side using the Bot API message_id it sees.
@@ -146,7 +148,15 @@ class DeliveryManager:
             return False
         return False
 
-    async def send_path(self, message, path: Path, *, as_video: bool = False, caption: str | None = None) -> str:
+    async def send_path(
+        self,
+        message,
+        path: Path,
+        *,
+        as_video: bool = False,
+        caption: str | None = None,
+        progress_callback=None,
+    ) -> str:
         if not path.is_file():
             raise FileNotFoundError(path)
 
@@ -160,6 +170,7 @@ class DeliveryManager:
                 path,
                 caption=caption,
                 as_video=as_video and path.suffix.lower() in _VIDEO_EXT,
+                progress_callback=progress_callback,
             )
             return "userbot"
 
