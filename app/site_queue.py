@@ -106,11 +106,33 @@ class SiteQueueManager:
         return value or None
 
     async def discover(self, site: str = _SITE) -> dict[str, int]:
-        rows: list[tuple[str, str, str | None, str | None]] = []
+        wordpress_rows: list[tuple[str, str, str | None, str | None]] = []
+        sitemap_rows: list[tuple[str, str, str | None, str | None]] = []
+
         try:
-            rows = await self._discover_wordpress(site)
+            wordpress_rows = await self._discover_wordpress(site)
         except Exception:
-            rows = await self._discover_sitemaps(site)
+            pass
+        try:
+            sitemap_rows = await self._discover_sitemaps(site)
+        except Exception:
+            pass
+
+        merged: dict[str, tuple[str, str, str | None, str | None]] = {}
+        for row in sitemap_rows:
+            merged[row[1]] = row
+        for row in wordpress_rows:
+            existing = merged.get(row[1])
+            if existing:
+                merged[row[1]] = (
+                    row[0] or existing[0],
+                    row[1],
+                    row[2] or existing[2],
+                    row[3] or existing[3],
+                )
+            else:
+                merged[row[1]] = row
+        rows = list(merged.values())
 
         if not rows:
             raise RuntimeError("Nenhuma postagem foi descoberta no site.")
@@ -157,7 +179,13 @@ class SiteQueueManager:
             )
             db.commit()
 
-        return {"found": len(rows), "added": added, "total": total}
+        return {
+            "found": len(rows),
+            "added": added,
+            "total": total,
+            "wordpress": len(wordpress_rows),
+            "sitemap": len(sitemap_rows),
+        }
 
     async def _discover_wordpress(self, site: str) -> list[tuple[str, str, str | None, str | None]]:
         endpoint = urljoin(site.rstrip("/") + "/", "wp-json/wp/v2/posts")
