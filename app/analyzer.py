@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from urllib.parse import urlsplit
 
 import httpx
@@ -15,6 +16,20 @@ from app.extractors.ytdlp import probe_ytdlp
 from app.fetcher import SafeFetcher
 from app.models import AnalyzeResult, MediaResource, ResourceType
 from app.settings import Settings, settings
+
+
+def _clean_media_title(title: str, page_url: str) -> str:
+    value = title.strip()
+    host = urlsplit(page_url).netloc.lower().removeprefix("www.")
+    brand = re.sub(r"[^a-z0-9]+", "", host.split(".", 1)[0])
+    for separator in (" - ", " | "):
+        if separator not in value:
+            continue
+        head, tail = value.rsplit(separator, 1)
+        tail_key = re.sub(r"[^a-z0-9]+", "", tail.lower())
+        if brand and tail_key and (tail_key == brand or tail_key in brand or brand in tail_key):
+            return head.strip()
+    return value
 
 
 class Analyzer:
@@ -81,8 +96,9 @@ class Analyzer:
 
         resources = [r for r in deduplicate(resources) if not r.metadata.get("navigation_only")]
         if title:
+            clean_title = _clean_media_title(title, final_url)
             for resource in resources:
-                resource.metadata.setdefault("page_title", title)
+                resource.metadata.setdefault("page_title", clean_title)
                 resource.metadata.setdefault("page_url", final_url)
                 if (
                     not resource.title
@@ -95,7 +111,7 @@ class Analyzer:
                         ResourceType.ARCHIVE,
                     }
                 ):
-                    resource.title = title
+                    resource.title = clean_title
         annotate_content_roles(resources)
         await self._annotate_chapter_exportability(resources, warnings)
         await self._inspect_manifests(resources, warnings)
