@@ -39,7 +39,7 @@ async def _new_sender(client):
     return sender
 
 
-async def upload_path(client, path: Path, progress_callback=None):
+async def upload_path(client, path: Path, progress_callback=None, connection_override: int | None = None):
     path = Path(path)
     file_size = path.stat().st_size
     if file_size <= 0:
@@ -49,7 +49,7 @@ async def upload_path(client, path: Path, progress_callback=None):
     part_size = int(utils.get_appropriated_part_size(file_size) * 1024)
     part_count = math.ceil(file_size / part_size)
     is_large = file_size > 10 * 1024 * 1024
-    connections = min(connection_count(file_size), max(1, part_count))
+    connections = min(connection_override or connection_count(file_size), max(1, part_count))
     senders = await asyncio.gather(*(_new_sender(client) for _ in range(connections)))
 
     md5 = hashlib.md5(usedforsecurity=False)
