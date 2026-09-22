@@ -420,6 +420,10 @@ async def run_bot() -> None:
                             message_id=message.message_id,
                             caption=clean_caption or None,
                         )
+                        print(
+                            f"IRIS_RELAY_OK source={message.chat_id} message={message.message_id} target={target_chat_id}",
+                            flush=True,
+                        )
                         try:
                             await context.bot.delete_message(
                                 chat_id=message.chat_id,
