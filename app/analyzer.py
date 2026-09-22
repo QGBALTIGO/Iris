@@ -50,7 +50,14 @@ class Analyzer:
             page = await self.fetcher.fetch(url)
         except httpx.HTTPStatusError as exc:
             blocked_status = exc.response.status_code
-            warnings.append(f"HTTP {blocked_status} na análise direta; usando navegador/extrator quando possível.")
+            if (exc.response.headers.get("cf-mitigated") or "").lower() == "challenge":
+                warnings.append(
+                    "Cloudflare challenge detectado antes do player; a origem não expôs a mídia para este servidor."
+                )
+            else:
+                warnings.append(
+                    f"HTTP {blocked_status} na análise direta; usando navegador/extrator quando possível."
+                )
         except Exception as exc:
             if not deep:
                 raise
