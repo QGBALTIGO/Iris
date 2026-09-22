@@ -23,6 +23,7 @@ from app.site_queue import site_queue
 from app.source_speed_smoke import run_source_speed_smoke
 from app.userbot import userbot
 from app.video_smoke import run_native_video_smoke
+from app.video_candidates import download_first_valid_video
 
 _ANALYSES: dict[str, AnalyzeResult] = {}
 _AUTH_STAGE: str | None = None
@@ -940,6 +941,33 @@ async def run_bot() -> None:
             for resource in selected
             if not resource.drm and resource.metadata.get("raw_downloadable") is not False
         ]
+        if delivery_mode == "video" and bundle_mode is None and selected:
+            try:
+                await query.edit_message_text(
+                    "🎬 <b>IRIS • Validando vídeo</b>\n\n"
+                    "Descartando placeholders/GIFs e procurando o MP4 real…"
+                )
+                resource, path, generated, info, rejected = await download_first_valid_video(selected)
+                try:
+                    await delivery.send_path(
+                        query.message,
+                        path,
+                        as_video=True,
+                        caption=delivery_caption(resource, as_video=True),
+                    )
+                    await query.edit_message_text(
+                        "✅ <b>Vídeo enviado</b>\n\n"
+                        f"📐 {info.width}×{info.height} • 🎞 {(info.codec or '?').upper()}"
+                    )
+                finally:
+                    path.unlink(missing_ok=True)
+                return
+            except Exception as exc:
+                await query.edit_message_text(
+                    "⚠️ <b>Não consegui validar um vídeo real.</b>\n\n"
+                    f"<code>{_safe(str(exc), 300)}</code>"
+                )
+                return
         if not selected:
             await query.edit_message_text(
                 "🔒 <b>Indisponível para download</b>\n\n"
@@ -1063,7 +1091,13 @@ async def run_bot() -> None:
                 resources = resources_for_bucket(result, bucket)
                 index = int(index_raw)
                 if 0 <= index < len(resources):
-                    await launch_download(query, [resources[index]], delivery_mode=mode)
+                    if bucket == "v" and mode == "video":
+                        ordered = [resources[index]] + [
+                            resource for pos, resource in enumerate(resources) if pos != index
+                        ]
+                        await launch_download(query, ordered, delivery_mode=mode)
+                    else:
+                        await launch_download(query, [resources[index]], delivery_mode=mode)
             return
 
         if action == "all" and len(parts) >= 4:
