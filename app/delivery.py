@@ -60,11 +60,13 @@ class DeliveryManager:
             raise FileNotFoundError(path)
         size = path.stat().st_size
         if size <= self.config.bot_upload_limit_bytes:
+            from telegram import InputFile
             with path.open("rb") as fh:
+                payload = InputFile(fh, filename=path.name)
                 if as_video and path.suffix.lower() in _VIDEO_EXT:
-                    await message.reply_video(video=fh, filename=path.name, caption=caption, supports_streaming=True)
+                    await message.reply_video(video=payload, caption=caption, supports_streaming=True)
                     return "bot:video"
-                await message.reply_document(document=fh, filename=path.name, caption=caption)
+                await message.reply_document(document=payload, caption=caption)
                 return "bot:file"
         if self.userbot_configured:
             await self._send_userbot(path, caption=caption)
