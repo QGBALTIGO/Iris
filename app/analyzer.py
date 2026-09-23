@@ -197,7 +197,23 @@ class Analyzer:
                 continue
             url = resource.url
             lower = url.lower()
-            if any(token in lower for token in ("/embed", "/player", "/movie/", "/episode/", "/watch/")):
+            host = urlsplit(url).netloc.lower().removeprefix("www.")
+            media_frame = any(
+                token in lower
+                for token in (
+                    "/embed",
+                    "/player",
+                    "/movie/",
+                    "/episode/",
+                    "/watch/",
+                    "/video.g",
+                )
+            )
+            trusted_player_host = host in {
+                "blogger.com",
+                "www.blogger.com",
+            } or host.endswith(".blogger.com")
+            if media_frame or trusted_player_host:
                 candidates.append(url)
 
         seen: set[str] = set()
