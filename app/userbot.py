@@ -53,7 +53,10 @@ class UserbotManager:
                 entity_cache_limit=10000,
             )
         if not self._client.is_connected():
-            await self._client.connect()
+            await asyncio.wait_for(
+                self._client.connect(),
+                timeout=max(5.0, self.config.mtproto_connect_timeout_seconds),
+            )
         return self._client
 
     async def is_authorized(self) -> bool:
@@ -64,6 +67,71 @@ class UserbotManager:
             return bool(await client.is_user_authorized())
         except Exception:
             return False
+
+    async def _reset_client(self) -> None:
+        client = self._client
+        self._client = None
+        self._delivery_target = None
+        self._delivery_target_key = None
+        if client is not None:
+            try:
+                await asyncio.wait_for(client.disconnect(), timeout=10.0)
+            except Exception:
+                pass
+
+    async def reconnect(self) -> None:
+        await self._reset_client()
+        client = await self.client()
+        if not await asyncio.wait_for(
+            client.is_user_authorized(),
+            timeout=max(5.0, self.config.mtproto_connect_timeout_seconds),
+        ):
+            raise RuntimeError("Conta 06 perdeu a autorização.")
+        print("IRIS_MTPROTO_RECONNECTED", flush=True)
+
+    async def _run_send_with_watchdog(self, operation, *, label: str):
+        acquired = False
+        try:
+            await asyncio.wait_for(
+                self._lock.acquire(),
+                timeout=max(5.0, self.config.mtproto_lock_timeout_seconds),
+            )
+            acquired = True
+        except asyncio.TimeoutError as exc:
+            raise TimeoutError(
+                f"Timeout aguardando lock MTProto para {label}"
+            ) from exc
+
+        attempts = max(1, int(self.config.mtproto_send_attempts))
+        try:
+            for attempt in range(1, attempts + 1):
+                try:
+                    return await asyncio.wait_for(
+                        operation(),
+                        timeout=max(30.0, self.config.mtproto_upload_timeout_seconds),
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    if attempt >= attempts:
+                        raise
+                    print(
+                        f"IRIS_MTPROTO_RETRY label={label} attempt={attempt} "
+                        f"error={type(exc).__name__}:{str(exc)[:220]}",
+                        flush=True,
+                    )
+                    try:
+                        await self.reconnect()
+                    except Exception as reconnect_exc:
+                        print(
+                            "IRIS_MTPROTO_RECONNECT_ERROR "
+                            f"{type(reconnect_exc).__name__}:{str(reconnect_exc)[:220]}",
+                            flush=True,
+                        )
+                    await asyncio.sleep(min(5.0, float(attempt)))
+        finally:
+            if acquired and self._lock.locked():
+                self._lock.release()
 
     async def begin_login(self) -> str:
         async with self._lock:
@@ -265,7 +333,8 @@ class UserbotManager:
     ):
         if not bot_username:
             raise RuntimeError("O bot não possui username público.")
-        async with self._lock:
+
+        async def operation():
             target = bot_username if bot_username.startswith("@") else f"@{bot_username}"
             return await self._send_file_to_entity(
                 target,
@@ -275,6 +344,11 @@ class UserbotManager:
                 progress_callback=progress_callback,
                 parse_mode=parse_mode,
             )
+
+        return await self._run_send_with_watchdog(
+            operation,
+            label=f"bot:{bot_username}",
+        )
 
     async def send_to_delivery_channel(
         self,
@@ -286,7 +360,7 @@ class UserbotManager:
         progress_callback=None,
         parse_mode=None,
     ):
-        async with self._lock:
+        async def operation():
             target = await self.resolve_delivery_target(invite_url)
             return await self._send_file_to_entity(
                 target,
@@ -296,6 +370,11 @@ class UserbotManager:
                 progress_callback=progress_callback,
                 parse_mode=parse_mode,
             )
+
+        return await self._run_send_with_watchdog(
+            operation,
+            label="delivery-channel",
+        )
 
     async def repair_delivery_channel_captions(
         self,
