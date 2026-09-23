@@ -186,6 +186,15 @@ async def probe_browser(
                 await nudge_players()
                 await page.wait_for_timeout(350)
 
+            # Some external players expose their stream only after choosing a
+            # server/channel. When probing that iframe as its own page, click
+            # the first available channel and give its API/HLS requests time.
+            with suppress(Exception):
+                channel = page.locator(".player_select_item").first
+                if await channel.count():
+                    await channel.click(force=True, timeout=1200)
+                    await page.wait_for_timeout(3500)
+
             rounds = max(0, interaction_rounds)
             previous_count = -1
             stable_rounds = 0
