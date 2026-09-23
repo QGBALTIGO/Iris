@@ -1,0 +1,112 @@
+name: AnimeFire io player probe
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/animefire-io-probe.yml"
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      - run: python -m playwright install --with-deps chromium
+      - name: Probe AnimeFire player
+        env:
+          IRIS_DOWNLOADS_DIR: /tmp/iris-animefire
+          IRIS_MAX_BROWSER_REQUESTS: "2500"
+        run: |
+          python - <<'PY'
+          import asyncio, json, time
+          from app.analyzer import Analyzer
+          from app.models import ResourceType
+          from playwright.async_api import async_playwright
+
+          URL="https://animefire.io/anime/eU7t5IvcNKU"
+
+          async def analyzer_probe():
+              started=time.monotonic()
+              result=await Analyzer().analyze(URL,deep=True)
+              media=[
+                r for r in result.resources
+                if r.type in {ResourceType.VIDEO,ResourceType.PLAYLIST,ResourceType.STREAM}
+              ]
+              print("ANIMEFIRE_ANALYZER "+json.dumps({
+                "seconds":round(time.monotonic()-started,3),
+                "title":result.title,
+                "final_url":result.final_url,
+                "warnings":result.warnings,
+                "counts":result.counts,
+                "media":[{
+                  "url":r.url,"type":r.type.value,"source":r.source,
+                  "mime":r.mime_type,"status":r.metadata.get("status"),
+                  "variants":len(r.variants)
+                } for r in media[:30]]
+              },ensure_ascii=False))
+
+          async def browser_probe():
+              async with async_playwright() as p:
+                browser=await p.chromium.launch(headless=True,args=["--disable-gpu"])
+                context=await browser.new_context(
+                  user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+                  locale="pt-BR",
+                  viewport={"width":1365,"height":900},
+                )
+                page=await context.new_page()
+                requests=[]
+                page.on("response", lambda resp: requests.append({
+                  "url":resp.url,
+                  "status":resp.status,
+                  "ctype":resp.headers.get("content-type")
+                }))
+                await page.goto(URL,wait_until="domcontentloaded",timeout=20000)
+                await page.wait_for_timeout(1500)
+                links=await page.locator("a").evaluate_all("""els => els.slice(0,200).map(e=>({text:(e.innerText||'').trim(),href:e.href}))""")
+                buttons=await page.locator("button").evaluate_all("""els => els.slice(0,200).map(e=>({text:(e.innerText||'').trim(),aria:e.getAttribute('aria-label')}))""")
+                print("ANIMEFIRE_DOM "+json.dumps({
+                  "url":page.url,
+                  "title":await page.title(),
+                  "links":[x for x in links if "Assistir" in x["text"] or "EP.1" in x["text"] or "/epis" in x["href"].lower() or "/watch" in x["href"].lower()][:50],
+                  "buttons":[x for x in buttons if "Assistir" in x["text"] or "EP.1" in x["text"]][:50],
+                  "frames":[f.url for f in page.frames]
+                },ensure_ascii=False))
+                clicked=False
+                for selector in [
+                  "text=Assistir T1 EP.1",
+                  "a:has-text('Assistir T1 EP.1')",
+                  "button:has-text('Assistir T1 EP.1')",
+                  "a:has-text('EP.1')",
+                ]:
+                  try:
+                    loc=page.locator(selector).first
+                    if await loc.count():
+                      await loc.click(timeout=1500,force=True)
+                      clicked=True
+                      break
+                  except Exception:
+                    pass
+                if clicked:
+                  await page.wait_for_timeout(4000)
+                media=[r for r in requests if any(x in (r["url"].lower()+" "+str(r["ctype"]).lower()) for x in [".m3u8",".mpd",".mp4","video/","mpegurl","dash+xml"])]
+                print("ANIMEFIRE_AFTER_CLICK "+json.dumps({
+                  "clicked":clicked,
+                  "url":page.url,
+                  "title":await page.title(),
+                  "frames":[f.url for f in page.frames],
+                  "media":media[:100],
+                },ensure_ascii=False))
+                await context.close(); await browser.close()
+
+          async def main():
+              await analyzer_probe()
+              await browser_probe()
+
+          asyncio.run(main())
+          PY
