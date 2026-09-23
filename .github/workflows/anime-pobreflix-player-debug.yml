@@ -1,0 +1,112 @@
+name: Anime/Pobreflix player debug
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/anime-pobreflix-player-debug.yml"
+
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install playwright httpx beautifulsoup4
+      - run: python -m playwright install --with-deps chromium
+      - name: Inspect player frames and requests
+        run: |
+          python - <<'PY'
+          import asyncio, json, re
+          from playwright.async_api import async_playwright
+
+          URLS = {
+            "animeonlinecc": "https://animesonlinecc.to/episodio/black-clover-episodio-170/",
+            "pobreflix": "https://www.pobrenow.com/filme/vamos-time-2026",
+          }
+
+          INTEREST = re.compile(r"(m3u8|mpd|\.mp4(?:\?|$)|\.ts(?:\?|$)|embed|player|video|stream|hls|source|episode|server|api)", re.I)
+
+          async def inspect(name, url):
+            rows=[]
+            async with async_playwright() as p:
+              browser=await p.chromium.launch(headless=True,args=["--disable-gpu","--disable-gpu-compositing","--disable-accelerated-video-decode"])
+              context=await browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+                locale="pt-BR",
+                viewport={"width":1365,"height":900},
+                extra_http_headers={"Accept-Language":"pt-BR,pt;q=0.9,en;q=0.8"},
+              )
+              page=await context.new_page()
+
+              async def on_response(resp):
+                try:
+                  ctype=resp.headers.get("content-type","")
+                  if INTEREST.search(resp.url) or any(x in ctype.lower() for x in ("video/","mpegurl","dash+xml","json")):
+                    rows.append({
+                      "url":resp.url,
+                      "status":resp.status,
+                      "ctype":ctype,
+                      "frame":resp.request.frame.url if resp.request.frame else None,
+                      "method":resp.request.method,
+                    })
+                except Exception:
+                  pass
+
+              page.on("response",on_response)
+              try:
+                await page.goto(url,wait_until="domcontentloaded",timeout=25000)
+              except Exception as e:
+                rows.append({"goto_error":f"{type(e).__name__}: {e}"})
+              try:
+                await page.wait_for_timeout(2500)
+                for frame in page.frames:
+                  try:
+                    await frame.evaluate("""() => {
+                      for (const v of document.querySelectorAll('video')) {
+                        try { v.muted=true; const p=v.play(); if(p&&p.catch)p.catch(()=>{}); } catch(e) {}
+                      }
+                      for (const sel of ['.vjs-big-play-button','.jw-icon-playback','.plyr__control--overlaid','button[aria-label*=play i]']) {
+                        const b=document.querySelector(sel); if(b){ try{b.click()}catch(e){} }
+                      }
+                    }""")
+                  except Exception:
+                    pass
+                await page.wait_for_timeout(4000)
+              except Exception:
+                pass
+
+              frames=[]
+              for fr in page.frames:
+                try:
+                  data=await fr.evaluate("""() => ({
+                    title: document.title,
+                    href: location.href,
+                    iframes: Array.from(document.querySelectorAll('iframe')).map(x=>x.src||x.getAttribute('src')),
+                    videos: Array.from(document.querySelectorAll('video,source')).map(x=>x.currentSrc||x.src||x.getAttribute('src')).filter(Boolean),
+                    links: Array.from(document.querySelectorAll('a[href]')).map(x=>x.href).filter(x=>/embed|player|video|stream|server|episode|watch/i.test(x)).slice(0,30),
+                    scripts: Array.from(document.scripts).map(x=>x.src).filter(Boolean).filter(x=>/player|video|stream|embed/i.test(x)).slice(0,30)
+                  })""")
+                  frames.append(data)
+                except Exception as e:
+                  frames.append({"href":fr.url,"error":str(e)[:200]})
+
+              print("PLAYER_DEBUG "+json.dumps({
+                "name":name,
+                "final_url":page.url,
+                "title":await page.title(),
+                "frames":frames,
+                "network":rows[-120:],
+              },ensure_ascii=False))
+              await context.close()
+              await browser.close()
+
+          async def main():
+            for name,url in URLS.items():
+              await inspect(name,url)
+
+          asyncio.run(main())
+          PY
