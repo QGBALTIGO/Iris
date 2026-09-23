@@ -8,3 +8,4 @@ playwright>=1.55,<2
 telethon>=1.40,<2
 img2pdf>=0.6,<1
 cryptg>=0.5,<1
+streamlink>=7.6,<8
