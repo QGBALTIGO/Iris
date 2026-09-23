@@ -1631,14 +1631,18 @@ async def run_bot() -> None:
             try:
                 result = await channel_backfill.run(application.bot)
                 print(
-                    f"IRIS_CHANNEL_BACKFILL_DONE sent={result['sent']} failed={result['failed']}",
+                    f"IRIS_CHANNEL_BACKFILL_DONE sent={result['sent']} "
+                    f"copied={result.get('copied', 0)} uploaded={result.get('uploaded', 0)} "
+                    f"failed={result['failed']}",
                     flush=True,
                 )
                 if settings.admin_id:
                     await application.bot.send_message(
                         settings.admin_id,
                         "📚 <b>Migração para o canal</b>\n\n"
-                        f"✅ Enviados: <b>{result['sent']}</b>\n"
+                        f"⚡ Copiados do seu PV: <b>{result.get('copied', 0)}</b>\n"
+                        f"⬆️ Reuploads necessários: <b>{result.get('uploaded', 0)}</b>\n"
+                        f"✅ Total enviado: <b>{result['sent']}</b>\n"
                         f"⚠️ Falhas: <b>{result['failed']}</b>",
                     )
             except Exception as exc:
