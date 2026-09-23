@@ -96,10 +96,10 @@ _PROFILES = (
         browser_first=True,
     ),
     ServiceProfile(
-        key="animeonlinecc",
-        label="Animes Online",
-        hosts=("animesonlinecc.to",),
-        strategies=("html", "browser", "hls", "yt-dlp"),
+        key="animefire",
+        label="AnimeFire",
+        hosts=("animefire.io", "animefire.net"),
+        strategies=("html", "browser", "player-network"),
         browser_first=True,
     ),
     ServiceProfile(
