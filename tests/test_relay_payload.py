@@ -15,4 +15,5 @@ def test_relay_payload_keeps_legacy_parser_compatible():
         "caption": "🎬 Teste",
         "queue_item_id": 42,
         "expected_kind": "video",
+        "channel_delivery": False,
     }
