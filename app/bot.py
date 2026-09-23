@@ -868,6 +868,7 @@ async def run_bot() -> None:
                         clean_caption = str(relay.get("caption") or "")
                         queue_item_id = relay.get("queue_item_id")
                         expected_kind = relay.get("expected_kind")
+                        channel_delivery = bool(relay.get("channel_delivery"))
                         media_kind = (
                             "video" if message.video else
                             "animation" if message.animation else
@@ -904,11 +905,17 @@ async def run_bot() -> None:
                             caption=clean_caption or None,
                         )
                         if queue_item_id is not None:
-                            site_queue.mark_relay_result(
-                                int(queue_item_id),
-                                media_kind=media_kind,
-                                message_id=getattr(copied, "message_id", None),
-                            )
+                            if channel_delivery and media_kind == "video":
+                                site_queue.mark_channel_sent(
+                                    int(queue_item_id),
+                                    getattr(copied, "message_id", None),
+                                )
+                            else:
+                                site_queue.mark_relay_result(
+                                    int(queue_item_id),
+                                    media_kind=media_kind,
+                                    message_id=getattr(copied, "message_id", None),
+                                )
                         media_obj = (
                             message.video
                             or message.animation
