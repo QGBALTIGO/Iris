@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 import shutil
 import time
@@ -47,11 +48,13 @@ async def _send_chunks(bot, chat_id: int, text: str) -> None:
         text = text[len(chunk):].lstrip("\n")
 
 
-async def _run_check(name: str, fn) -> Check:
+async def _run_check(name: str, fn, timeout: float = 900.0) -> Check:
     started = time.monotonic()
     try:
-        detail = await fn()
+        detail = await asyncio.wait_for(fn(), timeout=timeout)
         return Check(name, "PASS", time.monotonic() - started, str(detail))
+    except asyncio.TimeoutError:
+        return Check(name, "FAIL", time.monotonic() - started, f"Timeout após {timeout:.0f}s")
     except Exception as exc:
         return Check(
             name,
@@ -135,6 +138,12 @@ async def _public_download(name: str, resource: MediaResource, min_bytes: int = 
         path.unlink(missing_ok=True)
 
 
+async def _userbot_check() -> str:
+    if not await userbot.is_authorized():
+        raise AssertionError("Conta 06 não autenticada")
+    return await userbot.account_label()
+
+
 async def _synthetic_manifest_check() -> str:
     hls = """#EXTM3U
 #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="Português",LANGUAGE="pt-BR",DEFAULT=YES,URI="audio/pt.m3u8"
@@ -209,7 +218,8 @@ async def run_admin_test_suite(bot, admin_id: int) -> list[Check]:
             icon = "✅" if check.status == "PASS" else "❌"
             await bot.send_message(
                 admin_id,
-                f"{icon} <b>{name}</b> • {check.seconds:.1f}s\n<code>{check.detail[:850]}</code>",
+                f"{icon} <b>{html.escape(name)}</b> • {check.seconds:.1f}s\n"
+                f"<code>{html.escape(check.detail[:850])}</code>",
                 parse_mode="HTML",
             )
 
@@ -218,7 +228,7 @@ async def run_admin_test_suite(bot, admin_id: int) -> list[Check]:
             f"yt-dlp={_tool('yt-dlp')} N_m3u8DL-RE={_tool('N_m3u8DL-RE')} "
             f"streamlink={_tool('streamlink')} mkvmerge={_tool('mkvmerge')}"
         )))
-        await add("Conta 06", lambda: userbot.account_label())
+        await add("Conta 06", _userbot_check)
         await add("Stress sintético", _synthetic_2000)
         await add("Faixas HLS/DASH", _synthetic_manifest_check)
         await add("Classificação DRM", _synthetic_drm_check)
