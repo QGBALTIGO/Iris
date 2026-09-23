@@ -18,7 +18,7 @@ def test_tubepussy_editorial_metadata():
     assert meta.tags == ["ruiva"]
     block = format_editorial_block(meta)
     assert "<b>🚫 #Ruiva_Isabell</b>" in block
-    assert "#Novinha / #ruiva" in block
+    assert "#Novinha / #Ruiva" in block
     assert "<blockquote expandable>" in block
 
 
@@ -62,7 +62,7 @@ def test_person_line_is_omitted_when_missing():
     meta = extract_editorial_metadata(html, "https://xvideosputaria.com/video/")
     block = format_editorial_block(meta)
     assert "🚫" not in block
-    assert "#Amador / #caseiro" in block
+    assert "#Amador / #Caseiro" in block
 
 
 def test_video_caption_keeps_editorial_block():
