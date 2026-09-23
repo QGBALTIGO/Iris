@@ -111,8 +111,38 @@ def _looks_like_post(url: str, host: str) -> bool:
     if path == "/":
         return False
     lower = path.lower()
-    if host == "tubepussy.org" and re.match(r"^/[a-z]{2}/", lower):
-        return False
+    if host == "tubepussy.org":
+        # Keep only actual video pages: root-level slugs and /shorts/<id>/.
+        # Ignore locale mirrors, listings, profiles, auth/community pages, etc.
+        if re.match(r"^/[a-z]{2}/", lower):
+            return False
+        segments = [segment for segment in lower.split("/") if segment]
+        if len(segments) == 2 and segments[0] == "shorts" and segments[1].isdigit():
+            pass
+        elif len(segments) == 1:
+            if segments[0] in {
+                "latest-updates",
+                "top-rated",
+                "most-popular",
+                "community",
+                "login",
+                "login-required",
+                "register",
+                "profile",
+                "profiles",
+                "models",
+                "categories",
+                "tags",
+                "search",
+                "about",
+                "contact",
+                "dmca",
+                "privacy",
+                "terms",
+            }:
+                return False
+        else:
+            return False
     if host == "xvideosputaria.com":
         segments = [segment for segment in lower.split("/") if segment]
         if len(segments) != 1:
