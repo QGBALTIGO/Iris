@@ -179,7 +179,7 @@ class Analyzer:
 
         candidates: list[str] = []
         for resource in resources:
-            if resource.source != "html:iframe":
+            if resource.source not in {"html:iframe", "browser:frame"}:
                 continue
             url = resource.url
             lower = url.lower()
