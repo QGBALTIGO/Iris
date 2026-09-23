@@ -448,7 +448,7 @@ class SiteQueueManager:
         with self._connect() as db:
             state = db.execute(
                 "SELECT last_recovery_nonce FROM queue_state WHERE site=?",
-                (_SITE,),
+                (_SITE, max(1, int(settings.queue_max_attempts))),
             ).fetchone()
             if state and state["last_recovery_nonce"] == nonce:
                 return 0
@@ -504,9 +504,9 @@ class SiteQueueManager:
                     updated_at=?
                 WHERE site=?
                   AND status IN ('retry_local','pending')
-                  AND attempts >= 3
+                  AND attempts >= ?
                 """,
-                (time.time(), _SITE),
+                (time.time(), _SITE, max(1, int(settings.queue_max_attempts))),
             )
             db.commit()
             row = db.execute(
@@ -514,7 +514,7 @@ class SiteQueueManager:
                 SELECT id, url, title, status, attempts, published_at, last_error
                 FROM queue_items
                 WHERE site=? AND status IN ('retry_local','pending')
-                  AND attempts < 3
+                  AND attempts < ?
                 ORDER BY
                     CASE status WHEN 'retry_local' THEN 0 ELSE 1 END,
                     published_at DESC,
@@ -699,7 +699,7 @@ class SiteQueueManager:
                 )
                 await asyncio.wait_for(
                     self._process_item(bot, target_chat_id, item),
-                    timeout=900.0,
+                    timeout=max(60.0, settings.queue_item_timeout_seconds),
                 )
             except asyncio.CancelledError:
                 self._update_item(
@@ -709,13 +709,22 @@ class SiteQueueManager:
                 )
                 raise
             except Exception as exc:
+                max_attempts = max(1, int(settings.queue_max_attempts))
+                retry = item.attempts < max_attempts
+                status = "pending" if retry else "failed"
                 self._update_item(
                     item.id,
-                    "failed",
+                    status,
                     last_error=f"{type(exc).__name__}: {str(exc)[:450]}",
                 )
                 print(
-                    f"IRIS_QUEUE_FAILED item={item.id} error={type(exc).__name__}:{str(exc)[:180]}",
+                    (
+                        "IRIS_QUEUE_RETRY"
+                        if retry
+                        else "IRIS_QUEUE_FAILED"
+                    )
+                    + f" item={item.id} attempt={item.attempts}/{max_attempts} "
+                    + f"error={type(exc).__name__}:{str(exc)[:180]}",
                     flush=True,
                 )
 
