@@ -180,7 +180,9 @@ async def probe_browser(
 
             with suppress(Exception):
                 await nudge_players()
-                await page.wait_for_timeout(450)
+                await page.wait_for_timeout(900)
+                await nudge_players()
+                await page.wait_for_timeout(350)
 
             rounds = max(0, interaction_rounds)
             previous_count = -1
@@ -225,7 +227,10 @@ async def probe_browser(
 
                 # For normal watch pages, once real media appears there is no
                 # benefit in spending several extra seconds scrolling the page.
-                if not long_reader and round_index >= 1 and any(item.type in _PRIMARY_MEDIA for item in snapshot):
+                if not long_reader and round_index >= 3 and any(
+                    item.type in _PRIMARY_MEDIA and not item.metadata.get("hls_segment")
+                    for item in snapshot
+                ):
                     break
 
                 if current_count == previous_count:
@@ -260,6 +265,14 @@ async def probe_browser(
                 )
                 for candidate in extra_urls[:max_requests]:
                     kind = classify_resource(candidate)
+                    lower_candidate = candidate.lower()
+                    path_name = lower_candidate.split("?", 1)[0].rsplit("/", 1)[-1]
+                    if (
+                        kind == ResourceType.OTHER
+                        and "/hls/" in lower_candidate
+                        and path_name in {"master.txt", "playlist.txt", "index.txt", "video.txt"}
+                    ):
+                        kind = ResourceType.PLAYLIST
                     if kind == ResourceType.OTHER:
                         continue
                     try:
