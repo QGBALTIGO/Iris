@@ -86,10 +86,17 @@ class SiteQueueManager:
                     discovered_total INTEGER NOT NULL DEFAULT 0,
                     last_discovery_at REAL,
                     last_started_at REAL,
+                    last_recovery_nonce TEXT,
                     updated_at REAL NOT NULL
                 );
                 """
             )
+            columns = {
+                row["name"]
+                for row in db.execute("PRAGMA table_info(queue_state)").fetchall()
+            }
+            if "last_recovery_nonce" not in columns:
+                db.execute("ALTER TABLE queue_state ADD COLUMN last_recovery_nonce TEXT")
             db.execute(
                 """
                 INSERT OR IGNORE INTO queue_state(site, updated_at)
@@ -318,6 +325,17 @@ class SiteQueueManager:
                 (site,),
             ).fetchone()
 
+    def summary_for_logs(self) -> str:
+        data = self.status()
+        counts = data.get("counts") or {}
+        return (
+            f"running={data.get('running')} paused={data.get('paused')} "
+            f"total={data.get('discovered_total')} sent={counts.get('sent', 0)} "
+            f"pending={counts.get('pending', 0)} retry_local={counts.get('retry_local', 0)} "
+            f"processing={counts.get('processing', 0)} awaiting_delivery={counts.get('awaiting_delivery', 0)} "
+            f"failed={counts.get('failed', 0)} current={data.get('current')}"
+        )
+
     def status(self, site: str = _SITE) -> dict[str, object]:
         with self._connect() as db:
             state = db.execute(
@@ -410,6 +428,44 @@ class SiteQueueManager:
             )
             db.commit()
             return cur.rowcount
+
+    def recover_failed_once(self, nonce: str, target_chat_id: int | None = None) -> int:
+        if not nonce:
+            return 0
+        now = time.time()
+        with self._connect() as db:
+            state = db.execute(
+                "SELECT last_recovery_nonce FROM queue_state WHERE site=?",
+                (_SITE,),
+            ).fetchone()
+            if state and state["last_recovery_nonce"] == nonce:
+                return 0
+
+            cur = db.execute(
+                """
+                UPDATE queue_items
+                SET status='pending',
+                    updated_at=?
+                WHERE site=? AND status='failed'
+                """,
+                (now, _SITE),
+            )
+            count = cur.rowcount
+
+            db.execute(
+                """
+                UPDATE queue_state
+                SET running=1,
+                    paused=0,
+                    target_chat_id=COALESCE(?, target_chat_id),
+                    last_recovery_nonce=?,
+                    updated_at=?
+                WHERE site=?
+                """,
+                (target_chat_id, nonce, now, _SITE),
+            )
+            db.commit()
+            return count
 
     def retry_failures(self) -> int:
         with self._connect() as db:
