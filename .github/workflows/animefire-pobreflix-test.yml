@@ -1,0 +1,107 @@
+name: AnimeFire and Pobreflix site test
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/animefire-pobreflix-test.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg aria2
+      - run: python -m playwright install --with-deps chromium
+      - name: Analyze AnimeFire and Pobreflix
+        env:
+          IRIS_DOWNLOADS_DIR: /tmp/iris-site-test
+          IRIS_MAX_BROWSER_REQUESTS: "2500"
+        run: |
+          python - <<'PY'
+          import asyncio, json, time
+          from pathlib import Path
+
+          from app.analyzer import Analyzer
+          from app.video_candidates import download_first_valid_video
+          from app.models import ResourceType
+
+          CASES = {
+              "animefire_naruto": {
+                  "url": "https://animefire.io/anime/eU7t5IvcNKU",
+                  "download": False,
+              },
+              "pobreflix_vamos_time": {
+                  "url": "https://www.pobrenow.com/filme/vamos-time-2026",
+                  "download": True,
+              },
+          }
+
+          async def run_one(name, cfg):
+              started = time.monotonic()
+              result = await Analyzer().analyze(cfg["url"], deep=True)
+              media = [
+                  r for r in result.resources
+                  if r.type in {ResourceType.VIDEO, ResourceType.PLAYLIST, ResourceType.STREAM}
+              ]
+              row = {
+                  "name": name,
+                  "url": cfg["url"],
+                  "title": result.title,
+                  "seconds": round(time.monotonic() - started, 3),
+                  "warnings": result.warnings,
+                  "media_count": len(media),
+                  "media": [
+                      {
+                          "url": r.url,
+                          "type": r.type.value,
+                          "source": r.source,
+                          "mime": r.mime_type,
+                          "drm": r.drm,
+                          "variants": len(r.variants),
+                      }
+                      for r in media[:30]
+                  ],
+              }
+
+              if not media:
+                  blocked = any(
+                      "Cloudflare" in warning or "anti-bot" in warning
+                      for warning in result.warnings
+                  )
+                  row["status"] = "blocked" if blocked else "no-media"
+                  print("SITE_TEST " + json.dumps(row, ensure_ascii=False))
+                  return
+
+              if cfg["download"]:
+                  resource, path, generated, info, rejected = await download_first_valid_video(result.resources)
+                  row.update({
+                      "status": "downloaded",
+                      "selected": resource.url,
+                      "bytes": path.stat().st_size,
+                      "duration": info.duration,
+                      "width": info.width,
+                      "height": info.height,
+                      "codec": info.codec,
+                      "audio": info.audio_codec,
+                      "rejected": rejected,
+                  })
+                  path.unlink(missing_ok=True)
+              else:
+                  row["status"] = "media-detected"
+
+              print("SITE_TEST " + json.dumps(row, ensure_ascii=False))
+
+          async def main():
+              Path("/tmp/iris-site-test").mkdir(parents=True, exist_ok=True)
+              for name, cfg in CASES.items():
+                  await run_one(name, cfg)
+
+          asyncio.run(main())
+          PY
