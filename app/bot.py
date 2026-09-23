@@ -1563,26 +1563,67 @@ async def run_bot() -> None:
 
     try:
         queue_state = site_queue.status()
-        if (
-            settings.site_queue_auto_start
-            and settings.admin_id
-            and not queue_state.get("last_started_at")
-        ):
-            stats = await site_queue.discover()
-            await site_queue.start(application.bot, settings.admin_id, discover=False)
-            await application.bot.send_message(
+        print("IRIS_QUEUE_STATE " + site_queue.summary_for_logs(), flush=True)
+
+        recovered = 0
+        if settings.queue_recovery_nonce and settings.admin_id:
+            recovered = site_queue.recover_failed_once(
+                settings.queue_recovery_nonce,
                 settings.admin_id,
-                "▶️ <b>Teste do catálogo iniciado</b>\n\n"
-                f"🎞️ Itens registrados: <b>{stats['total']}</b>\n"
-                "Vou enviar um por um e salvar o progresso automaticamente.",
             )
-        else:
-            resumed = await site_queue.maybe_resume(application.bot)
-            if resumed and settings.admin_id:
+            if recovered:
+                await site_queue.start(application.bot, settings.admin_id, discover=False)
                 await application.bot.send_message(
                     settings.admin_id,
-                    "♻️ <b>Fila retomada automaticamente</b>\n\n"
-                    "Continuando do ponto salvo antes do reinício.",
+                    "♻️ <b>Fila recuperada</b>\n\n"
+                    f"🔁 <b>{recovered}</b> item(ns) que falharam durante os bugs anteriores "
+                    "voltaram para a fila.\n"
+                    "✅ Os vídeos já enviados foram preservados.",
+                )
+                print(
+                    f"IRIS_QUEUE_RECOVERY recovered={recovered} "
+                    + site_queue.summary_for_logs(),
+                    flush=True,
+                )
+
+        if not recovered:
+            queue_state = site_queue.status()
+            counts = queue_state.get("counts") or {}
+            pending = int(counts.get("pending", 0)) + int(counts.get("retry_local", 0))
+
+            if queue_state.get("running") and not queue_state.get("paused"):
+                resumed = await site_queue.maybe_resume(application.bot)
+                if resumed and settings.admin_id:
+                    await application.bot.send_message(
+                        settings.admin_id,
+                        "♻️ <b>Fila retomada automaticamente</b>\n\n"
+                        "Continuando do ponto salvo antes do reinício.",
+                    )
+            elif (
+                settings.site_queue_auto_start
+                and settings.admin_id
+                and not queue_state.get("running")
+                and pending > 0
+            ):
+                await site_queue.start(application.bot, settings.admin_id, discover=False)
+                await application.bot.send_message(
+                    settings.admin_id,
+                    "▶️ <b>Fila reativada</b>\n\n"
+                    f"⏳ <b>{pending}</b> item(ns) ainda estavam pendentes. "
+                    "Continuando de onde parou.",
+                )
+            elif (
+                settings.site_queue_auto_start
+                and settings.admin_id
+                and not queue_state.get("last_started_at")
+            ):
+                stats = await site_queue.discover()
+                await site_queue.start(application.bot, settings.admin_id, discover=False)
+                await application.bot.send_message(
+                    settings.admin_id,
+                    "▶️ <b>Teste do catálogo iniciado</b>\n\n"
+                    f"🎞️ Itens registrados: <b>{stats['total']}</b>\n"
+                    "Vou enviar um por um e salvar o progresso automaticamente.",
                 )
     except Exception as exc:
         print(f"IRIS_QUEUE_RESUME_ERROR {type(exc).__name__}: {exc}", flush=True)
