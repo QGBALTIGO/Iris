@@ -91,6 +91,40 @@ class ChannelBackfill:
         )
         return int(copied.message_id)
 
+    async def _copy_existing_private_message_with_retry(
+        self,
+        *,
+        bot,
+        source_chat_id: int,
+        source_message_id: int,
+        destination_chat_id: int,
+        max_attempts: int = 6,
+    ) -> int:
+        for attempt in range(1, max_attempts + 1):
+            try:
+                return await self._copy_existing_private_message(
+                    bot=bot,
+                    source_chat_id=source_chat_id,
+                    source_message_id=source_message_id,
+                    destination_chat_id=destination_chat_id,
+                )
+            except Exception as exc:
+                retry_after = getattr(exc, "retry_after", None)
+                if retry_after is None or attempt >= max_attempts:
+                    raise
+                try:
+                    wait_seconds = float(retry_after.total_seconds())
+                except Exception:
+                    wait_seconds = float(retry_after)
+                wait_seconds = max(1.0, wait_seconds) + 1.0
+                print(
+                    f"IRIS_CHANNEL_BACKFILL_FLOODWAIT message={source_message_id} "
+                    f"attempt={attempt} wait={wait_seconds:.1f}s",
+                    flush=True,
+                )
+                await asyncio.sleep(wait_seconds)
+        raise RuntimeError("Falha inesperada no retry de copyMessage")
+
     async def _send_url(self, url: str, fallback_title: str | None = None, bot=None) -> tuple[str, int | None]:
         result = await self.analyzer.analyze(url, deep=True)
         resource, path, _, info, rejected = await download_first_valid_video(result.resources)
@@ -170,7 +204,7 @@ class ChannelBackfill:
                             "O bot precisa ser administrador com permissão de postagem "
                             "no canal para copiar mensagens antigas sem reupload."
                         )
-                    message_id = await self._copy_existing_private_message(
+                    message_id = await self._copy_existing_private_message_with_retry(
                         bot=bot,
                         source_chat_id=int(settings.admin_id),
                         source_message_id=int(private_message_id),
@@ -211,7 +245,10 @@ class ChannelBackfill:
                     f"{type(exc).__name__}: {str(exc)[:300]}",
                     flush=True,
                 )
-            await asyncio.sleep(0.12 if private_message_id is not None else 1.0)
+            # Telegram applies a per-chat posting rate limit. Three seconds
+            # keeps historical copies below the common channel threshold while
+            # still being much faster than re-downloading/re-uploading media.
+            await asyncio.sleep(3.2 if private_message_id is not None else 1.0)
 
         for url in self._manual_urls():
             if url in queue_urls or self._manual_done(url):
