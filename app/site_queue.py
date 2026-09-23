@@ -740,38 +740,50 @@ class SiteQueueManager:
         )
 
         caption = f"🎬 {title[:220]}"
-        # For this site's large CDN videos, Telegram external-URL fetches
-        # regularly time out. The catalogue queue intentionally exercises the
-        # full production path: web download -> native MTProto video upload.
-        local_mode = True
 
-        if not local_mode and media.type == ResourceType.VIDEO and not media.drm:
-            try:
-                self._update_item(item.id, "awaiting_delivery")
-                await asyncio.wait_for(
-                    self.delivery.send_resource_to_chat(
-                        bot,
-                        target_chat_id,
-                        media,
-                        caption=caption,
-                        queue_item_id=item.id,
-                        as_video=True,
-                    ),
-                    timeout=45.0,
-                )
-                result_status = await self.wait_delivery(item.id)
-                if result_status == "sent":
-                    return
-                if result_status != "retry_local":
-                    return
-            except Exception as exc:
-                self._update_item(
-                    item.id,
-                    "retry_local",
-                    last_error=f"Entrega direta falhou: {type(exc).__name__}: {str(exc)[:220]}",
-                )
+        # First try the fast HTML result. If its CDN URL is expired/blocked,
+        # refresh the page in Chromium and retry with fresh network-captured media.
+        try:
+            await self._send_local_native(
+                bot,
+                target_chat_id,
+                item,
+                result.resources,
+                caption,
+            )
+            return
+        except Exception as first_exc:
+            print(
+                f"IRIS_LEGENDADOS_REFRESH item={item.id} "
+                f"first_error={type(first_exc).__name__}:{str(first_exc)[:220]}",
+                flush=True,
+            )
 
-        await self._send_local_native(bot, target_chat_id, item, result.resources, caption)
+        deep = await self.analyzer.analyze(item.url, deep=True)
+        fresh_media = self._pick_video(deep.resources)
+        if fresh_media is None:
+            raise RuntimeError(
+                "Nenhum vídeo fresco encontrado após reanálise no navegador"
+            )
+
+        fresh_title = fresh_media.title or deep.title or title
+        caption = f"🎬 {fresh_title[:220]}"
+        self._update_item(
+            item.id,
+            "processing",
+            title=fresh_title,
+            media_url=fresh_media.url,
+            media_source=fresh_media.source,
+            last_error="Link rápido falhou; tentando mídia fresca do navegador",
+        )
+
+        await self._send_local_native(
+            bot,
+            target_chat_id,
+            item,
+            deep.resources,
+            caption,
+        )
 
     async def _send_local_native(
         self,
