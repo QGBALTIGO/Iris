@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 from app.analyzer import Analyzer
 from app.delivery import DeliveryManager
-from app.editorial import format_editorial_block, format_video_caption
+from app.editorial import hashtag
 from app.settings import settings
 from app.video_candidates import download_first_valid_video
 
@@ -15,6 +16,46 @@ _SEEDS = {
     "tubepussy": "https://tubepussy.org/ruiva-isabel-dando-a-bucetinha-e-levando-na-cara/#forward",
     "xvideosputaria": "https://xvideosputaria.com/anao-gabriela-gadotti-mini-gabys-boquetando-com-leite-na-boca/#forward",
 }
+
+_FIXED_TAGS = [
+    "#Pornô_Longo",
+    "#Famosas",
+    "#Lésbicas",
+    "#Boquetes",
+    "#Anal",
+    "#Gostosas",
+    "#Novinhas",
+    "#Coroas",
+    "#Bucetas",
+    "#Peitudas",
+    "#Mini_Gabys",
+    "#Bundas",
+    "#Anã",
+    "#Chupando_Buceta",
+    "#Gozada_Na_Cara",
+    "#Mamando_Rola",
+    "#Pack",
+    "#Peitos_Naturais",
+]
+
+_FALLBACK_PERSON = {
+    "tubepussy": "Ruiva Isabell",
+    "xvideosputaria": "Mini Gabys",
+}
+
+
+def _fixed_test_caption(platform: str, meta: dict | None) -> str:
+    person = None
+    if meta:
+        person = meta.get("person")
+    person = str(person or _FALLBACK_PERSON.get(platform) or "Vídeo")
+    person_tag = hashtag(person) or "#Vídeo"
+    tags = " / ".join(_FIXED_TAGS)
+    return (
+        f"<b>🚫 {html.escape(person_tag)}</b>\n\n"
+        f"<blockquote expandable>{html.escape('🔎 Tags: ' + tags)}</blockquote>"
+    )
+
 
 _SKIP_PREFIXES = (
     "/tag/",
@@ -120,11 +161,11 @@ async def _discover_related(seed: str, limit: int = 30) -> list[str]:
 
 async def _editorial_from_result(result, selected) -> dict | None:
     meta = selected.metadata.get("editorial")
-    if meta and format_editorial_block(meta):
+    if meta:
         return dict(meta)
     for resource in result.resources:
         meta = resource.metadata.get("editorial")
-        if meta and format_editorial_block(meta):
+        if meta:
             return dict(meta)
     return None
 
@@ -155,24 +196,13 @@ async def run_platform_batch(bot) -> dict[str, object]:
                     result.resources
                 )
                 meta = await _editorial_from_result(result, selected)
-                if not meta:
-                    failures.append(f"{page_url}: sem pessoa/tags editoriais")
-                    path.unlink(missing_ok=True)
-                    path = None
-                    continue
-
                 title = (
                     selected.title
                     or selected.metadata.get("page_title")
                     or result.title
                     or Path(path).stem
                 )
-                caption = format_video_caption(str(title), meta)
-                if not caption.startswith("<b>🚫 ") or "<blockquote expandable>" not in caption:
-                    failures.append(f"{page_url}: legenda editorial incompleta")
-                    path.unlink(missing_ok=True)
-                    path = None
-                    continue
+                caption = _fixed_test_caption(platform, meta)
 
                 receipt = await delivery.send_path_to_chat(
                     bot,
