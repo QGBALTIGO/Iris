@@ -1770,14 +1770,22 @@ async def run_bot() -> None:
                 except Exception:
                     pass
             finally:
-                if should_resume:
-                    try:
+                try:
+                    queue_after = site_queue.status()
+                    counts_after = queue_after.get("counts") or {}
+                    pending_after = (
+                        int(counts_after.get("pending", 0))
+                        + int(counts_after.get("retry_local", 0))
+                        + int(counts_after.get("processing", 0))
+                        + int(counts_after.get("awaiting_delivery", 0))
+                    )
+                    if should_resume or (settings.site_queue_auto_start and pending_after > 0):
                         await site_queue.resume(application.bot, settings.admin_id)
-                    except Exception as exc:
-                        print(
-                            f"IRIS_PLATFORM_BATCH_RESUME_ERROR {type(exc).__name__}: {exc}",
-                            flush=True,
-                        )
+                except Exception as exc:
+                    print(
+                        f"IRIS_PLATFORM_BATCH_RESUME_ERROR {type(exc).__name__}: {exc}",
+                        flush=True,
+                    )
         asyncio.create_task(_platform_batch_once(), name="iris-platform-batch")
 
     if settings.one_shot_url and settings.admin_id:
