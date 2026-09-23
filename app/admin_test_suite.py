@@ -374,6 +374,19 @@ async def run_admin_test_suite(bot, admin_id: int) -> list[Check]:
         async def add(name: str, fn):
             check = await _run_check(name, fn)
             checks.append(check)
+            print(
+                "IRIS_TEST_RESULT "
+                + json.dumps(
+                    {
+                        "name": check.name,
+                        "status": check.status,
+                        "seconds": round(check.seconds, 3),
+                        "detail": check.detail,
+                    },
+                    ensure_ascii=False,
+                ),
+                flush=True,
+            )
             icon = "✅" if check.status == "PASS" else "❌"
             await bot.send_message(
                 admin_id,
