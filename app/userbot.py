@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from pathlib import Path
 
 from app.fast_mtproto import upload_path
 from app.settings import Settings, settings
 from app.video_tools import make_thumbnail, normalize_video_mp4, probe_video
+
+
+_INVITE_RE = re.compile(r"(?:t\.me/(?:\+|joinchat/)|telegram\.me/(?:\+|joinchat/))([A-Za-z0-9_-]+)")
 
 
 class UserbotManager:
@@ -15,6 +19,8 @@ class UserbotManager:
         self._lock = asyncio.Lock()
         self._pending_code_hash: str | None = None
         self._awaiting_password = False
+        self._delivery_target = None
+        self._delivery_target_key: str | None = None
 
     @property
     def configured(self) -> bool:
@@ -117,6 +123,134 @@ class UserbotManager:
         me = await client.get_me()
         return int(me.id)
 
+    @staticmethod
+    def _invite_hash(invite_url: str) -> str:
+        match = _INVITE_RE.search(invite_url.strip())
+        if not match:
+            raise ValueError("Convite privado do Telegram inválido.")
+        return match.group(1)
+
+    async def resolve_delivery_target(self, invite_url: str):
+        key = self._invite_hash(invite_url)
+        if self._delivery_target is not None and self._delivery_target_key == key:
+            return self._delivery_target
+
+        from telethon.errors import UserAlreadyParticipantError  # type: ignore
+        from telethon.tl.functions.messages import CheckChatInviteRequest, ImportChatInviteRequest  # type: ignore
+
+        client = await self.client()
+        if not await client.is_user_authorized():
+            raise RuntimeError("Conta 06 ainda não está autenticada.")
+
+        check = await client(CheckChatInviteRequest(key))
+        entity = getattr(check, "chat", None)
+        if entity is None:
+            try:
+                result = await client(ImportChatInviteRequest(key))
+                entity = result.chats[0] if result.chats else None
+            except UserAlreadyParticipantError:
+                check = await client(CheckChatInviteRequest(key))
+                entity = getattr(check, "chat", None)
+
+        if entity is None:
+            raise RuntimeError("Não consegui resolver o canal do convite.")
+
+        self._delivery_target = entity
+        self._delivery_target_key = key
+        return entity
+
+    async def delivery_target_info(self, invite_url: str) -> dict[str, object]:
+        from telethon import utils  # type: ignore
+
+        client = await self.client()
+        entity = await self.resolve_delivery_target(invite_url)
+        permissions = None
+        try:
+            permissions = await client.get_permissions(entity, "me")
+        except Exception:
+            pass
+
+        broadcast = bool(getattr(entity, "broadcast", False))
+        megagroup = bool(getattr(entity, "megagroup", False))
+        is_creator = bool(getattr(permissions, "is_creator", False)) if permissions else False
+        is_admin = bool(getattr(permissions, "is_admin", False)) if permissions else False
+        if broadcast:
+            can_post = is_creator or is_admin
+        else:
+            can_post = not bool(getattr(permissions, "send_messages", True) is False) if permissions else True
+
+        return {
+            "id": int(utils.get_peer_id(entity)),
+            "title": getattr(entity, "title", None) or "Destino Telegram",
+            "broadcast": broadcast,
+            "megagroup": megagroup,
+            "is_creator": is_creator,
+            "is_admin": is_admin,
+            "can_post": can_post,
+        }
+
+    async def _send_file_to_entity(
+        self,
+        target,
+        file_or_url: str | Path,
+        *,
+        caption: str | None = None,
+        as_video: bool = False,
+        progress_callback=None,
+    ):
+        client = await self.client()
+        if not await client.is_user_authorized():
+            raise RuntimeError("Conta 06 ainda não está autenticada.")
+
+        payload = file_or_url
+        path = Path(file_or_url) if isinstance(file_or_url, (str, Path)) else None
+        upload_path_value: Path | None = path if path is not None and path.is_file() else None
+        generated_mp4 = False
+        thumb: Path | None = None
+        attributes = None
+        mime_type = None
+
+        if upload_path_value is not None:
+            if as_video:
+                from telethon.tl.types import DocumentAttributeVideo  # type: ignore
+
+                upload_path_value, generated_mp4 = await normalize_video_mp4(upload_path_value)
+                info = await probe_video(upload_path_value)
+                thumb = upload_path_value.with_name(f".{upload_path_value.stem}.thumb.jpg")
+                try:
+                    await make_thumbnail(upload_path_value, thumb, second=1.0)
+                except Exception:
+                    thumb = None
+                attributes = [
+                    DocumentAttributeVideo(
+                        duration=max(0.1, float(info.duration)),
+                        w=max(1, int(info.width)),
+                        h=max(1, int(info.height)),
+                        supports_streaming=True,
+                    )
+                ]
+                mime_type = "video/mp4"
+
+            payload = await upload_path(client, upload_path_value, progress_callback=progress_callback)
+
+        try:
+            return await client.send_file(
+                target,
+                payload,
+                caption=caption or "",
+                force_document=not as_video,
+                supports_streaming=as_video,
+                attributes=attributes,
+                thumb=str(thumb) if thumb and thumb.exists() else None,
+                mime_type=mime_type,
+                progress_callback=progress_callback if upload_path_value is None else None,
+            )
+        finally:
+            if thumb:
+                thumb.unlink(missing_ok=True)
+            if generated_mp4 and upload_path_value:
+                upload_path_value.unlink(missing_ok=True)
+
     async def send_to_bot(
         self,
         bot_username: str,
@@ -126,68 +260,36 @@ class UserbotManager:
         as_video: bool = False,
         progress_callback=None,
     ):
-        """Upload/send to the bot's private chat.
-
-        This deliberately avoids sending to an arbitrary numeric user ID, which
-        requires an MTProto access_hash. Bot usernames are globally resolvable.
-        The Bot API can then copy the resulting message server-side to the
-        destination chat without a second upload.
-        """
         if not bot_username:
-            raise RuntimeError("O bot não possui username configurado.")
+            raise RuntimeError("O bot não possui username público.")
         async with self._lock:
-            client = await self.client()
-            if not await client.is_user_authorized():
-                raise RuntimeError("Conta 06 ainda não está autenticada.")
             target = bot_username if bot_username.startswith("@") else f"@{bot_username}"
-            payload = file_or_url
-            path = Path(file_or_url) if isinstance(file_or_url, (str, Path)) else None
-            upload_path_value: Path | None = path if path is not None and path.is_file() else None
-            generated_mp4 = False
-            thumb: Path | None = None
-            attributes = None
-            mime_type = None
+            return await self._send_file_to_entity(
+                target,
+                file_or_url,
+                caption=caption,
+                as_video=as_video,
+                progress_callback=progress_callback,
+            )
 
-            if upload_path_value is not None:
-                if as_video:
-                    from telethon.tl.types import DocumentAttributeVideo  # type: ignore
-
-                    upload_path_value, generated_mp4 = await normalize_video_mp4(upload_path_value)
-                    info = await probe_video(upload_path_value)
-                    thumb = upload_path_value.with_name(f".{upload_path_value.stem}.thumb.jpg")
-                    try:
-                        await make_thumbnail(upload_path_value, thumb, second=1.0)
-                    except Exception:
-                        thumb = None
-                    attributes = [
-                        DocumentAttributeVideo(
-                            duration=max(0.1, float(info.duration)),
-                            w=max(1, int(info.width)),
-                            h=max(1, int(info.height)),
-                            supports_streaming=True,
-                        )
-                    ]
-                    mime_type = "video/mp4"
-
-                payload = await upload_path(client, upload_path_value, progress_callback=progress_callback)
-
-            try:
-                return await client.send_file(
-                    target,
-                    payload,
-                    caption=caption or "",
-                    force_document=not as_video,
-                    supports_streaming=as_video,
-                    attributes=attributes,
-                    thumb=str(thumb) if thumb and thumb.exists() else None,
-                    mime_type=mime_type,
-                    progress_callback=progress_callback if upload_path_value is None else None,
-                )
-            finally:
-                if thumb:
-                    thumb.unlink(missing_ok=True)
-                if generated_mp4 and upload_path_value:
-                    upload_path_value.unlink(missing_ok=True)
+    async def send_to_delivery_channel(
+        self,
+        invite_url: str,
+        file_or_url: str | Path,
+        *,
+        caption: str | None = None,
+        as_video: bool = False,
+        progress_callback=None,
+    ):
+        async with self._lock:
+            target = await self.resolve_delivery_target(invite_url)
+            return await self._send_file_to_entity(
+                target,
+                file_or_url,
+                caption=caption,
+                as_video=as_video,
+                progress_callback=progress_callback,
+            )
 
     async def delete_from_bot_chat(self, bot_username: str, message_id: int) -> None:
         try:
