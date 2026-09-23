@@ -57,6 +57,8 @@ class AnalyzeResult(BaseModel):
     final_url: str
     title: str | None = None
     content_type: str | None = None
+    service: str | None = None
+    drm_systems: list[str] = Field(default_factory=list)
     resources: list[MediaResource] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
 
