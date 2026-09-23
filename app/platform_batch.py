@@ -18,6 +18,61 @@ _SEEDS = {
     "xvideosputaria": "https://xvideosputaria.com/anao-gabriela-gadotti-mini-gabys-boquetando-com-leite-na-boca/#forward",
 }
 
+_HISTORY_PATH = Path("/data/platform_batch_history.json")
+
+# Media confirmed in previous Railway platform-batch logs. Query strings are
+# intentionally omitted because these CDNs rotate signed URLs.
+_HISTORICAL_MEDIA_KEYS = {
+    "tubepussy": {
+        "midias.foxvideo.club/23000/23405/23405.mp4",
+        "midias.foxvideo.club/27000/27864/27864_shorts.mp4",
+        "midias.foxvideo.club/13000/13621/13621_shorts.mp4",
+    },
+    "xvideosputaria": {
+        "vazounudes.net/hls/db4bbebc-710b-445d-8b4b-2ae2cc081d82/480p/video.m3u8",
+    },
+}
+
+_HISTORICAL_PAGES = {
+    "tubepussy": {
+        "https://tubepussy.org/ruiva-isabel-dando-a-bucetinha-e-levando-na-cara/",
+        "https://tubepussy.org/en/redhead-isabel-gets-pussy-pounded-and-facialized/",
+        "https://tubepussy.org/shorts/27864/",
+        "https://tubepussy.org/shorts/13621/",
+    },
+    "xvideosputaria": {
+        "https://xvideosputaria.com/anao-gabriela-gadotti-mini-gabys-boquetando-com-leite-na-boca/",
+    },
+}
+
+
+def _load_history() -> dict[str, dict[str, list[str]]]:
+    data: dict[str, dict[str, list[str]]] = {}
+    try:
+        raw = json.loads(_HISTORY_PATH.read_text(encoding="utf-8"))
+        if isinstance(raw, dict):
+            for platform, value in raw.items():
+                if not isinstance(value, dict):
+                    continue
+                data[str(platform)] = {
+                    "media": [str(x) for x in value.get("media", []) if x],
+                    "pages": [str(x) for x in value.get("pages", []) if x],
+                }
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        pass
+    return data
+
+
+def _save_history(data: dict[str, dict[str, list[str]]]) -> None:
+    _HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    temp = _HISTORY_PATH.with_suffix(".tmp")
+    temp.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    temp.replace(_HISTORY_PATH)
+
+
 _SKIP_PREFIXES = (
     "/tag/",
     "/tags/",
@@ -219,6 +274,7 @@ async def run_platform_batch(bot) -> dict[str, object]:
     analyzer = Analyzer()
     delivery = DeliveryManager()
     report: dict[str, object] = {}
+    history = _load_history()
 
     tube_correction = settings.platform_batch_nonce == "editorial-six-v3-correction"
     xvp_correction = settings.platform_batch_nonce == "editorial-xvp-v4-correction"
@@ -229,7 +285,11 @@ async def run_platform_batch(bot) -> dict[str, object]:
         attempted = 0
         failures: list[str] = []
         rows: list[dict] = []
-        seen_media: set[str] = set()
+        platform_history = history.setdefault(platform, {"media": [], "pages": []})
+        seen_media: set[str] = set(_HISTORICAL_MEDIA_KEYS.get(platform, set()))
+        seen_media.update(str(x) for x in platform_history.get("media", []))
+        seen_pages: set[str] = set(_HISTORICAL_PAGES.get(platform, set()))
+        seen_pages.update(str(x) for x in platform_history.get("pages", []))
         seen_fingerprints: set[str] = set()
 
         if xvp_correction:
@@ -246,7 +306,10 @@ async def run_platform_batch(bot) -> dict[str, object]:
         for page_url in candidates:
             if sent >= target:
                 break
-            if skip_seed and _canonical(page_url) == _canonical(seed):
+            canonical_page = _canonical(page_url)
+            if canonical_page in seen_pages:
+                continue
+            if skip_seed and canonical_page == _canonical(seed):
                 continue
             attempted += 1
             path: Path | None = None
@@ -292,6 +355,11 @@ async def run_platform_batch(bot) -> dict[str, object]:
                     respect_channel_only=False,
                 )
                 sent += 1
+                seen_pages.add(canonical_page)
+                platform_history["media"] = sorted(seen_media)
+                platform_history["pages"] = sorted(seen_pages)
+                _save_history(history)
+
                 row = {
                     "platform": platform,
                     "page": page_url,
