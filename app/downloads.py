@@ -78,7 +78,7 @@ class DownloadEngine:
             raise DownloadRejected("Conteúdo protegido por DRM não é baixado pelo Iris")
         engine = self.choose_engine(resource)
         target = self.config.downloads_dir / (filename or safe_filename(resource))
-        if resource.type == ResourceType.PLAYLIST and target.suffix.lower() in {".m3u8", ".m3u", ".mpd", ".ism", ".isml"}:
+        if resource.type == ResourceType.PLAYLIST and target.suffix.lower() != ".mp4":
             target = target.with_suffix(".mp4")
         target.parent.mkdir(parents=True, exist_ok=True)
 
