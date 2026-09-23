@@ -1724,6 +1724,96 @@ async def run_bot() -> None:
     except Exception as exc:
         print(f"IRIS_QUEUE_RESUME_ERROR {type(exc).__name__}: {exc}", flush=True)
 
+    # One-off admin batch requested on 2026-09-23. The marker lives on
+    # the Railway volume so redeploys cannot send the same batch twice.
+    if settings.admin_id:
+        async def _adhoc_platform_batch_once():
+            await asyncio.sleep(7)
+            marker = Path("/data/platform_batch_once_20260923_three_each_v1.json")
+            if marker.exists():
+                return
+
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(
+                __import__("json").dumps(
+                    {"state": "running", "started_at": time.time()},
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            previous = site_queue.status()
+            should_resume = bool(previous.get("running") and not previous.get("paused"))
+            try:
+                site_queue.pause()
+                await application.bot.send_message(
+                    settings.admin_id,
+                    "🎬 <b>Novo lote editorial</b>\n\n"
+                    "Enviando <b>3 TubePussy + 3 XVideosPutaria</b>, "
+                    "todos diferentes dos vídeos já enviados e com descrição própria da página.",
+                )
+                result = await run_platform_batch(application.bot)
+                marker.write_text(
+                    __import__("json").dumps(
+                        {
+                            "state": "done",
+                            "finished_at": time.time(),
+                            "result": result,
+                        },
+                        ensure_ascii=False,
+                    ),
+                    encoding="utf-8",
+                )
+                await application.bot.send_message(
+                    settings.admin_id,
+                    "✅ <b>Novo lote concluído</b>\n\n"
+                    f"TubePussy: <b>{result.get('tubepussy', {}).get('sent', 0)}/3</b>\n"
+                    f"XVideosPutaria: <b>{result.get('xvideosputaria', {}).get('sent', 0)}/3</b>",
+                )
+                print(
+                    "IRIS_ADHOC_PLATFORM_BATCH_DONE "
+                    + __import__("json").dumps(result, ensure_ascii=False),
+                    flush=True,
+                )
+            except Exception as exc:
+                marker.write_text(
+                    __import__("json").dumps(
+                        {
+                            "state": "error",
+                            "finished_at": time.time(),
+                            "error": f"{type(exc).__name__}: {str(exc)[:500]}",
+                        },
+                        ensure_ascii=False,
+                    ),
+                    encoding="utf-8",
+                )
+                print(
+                    f"IRIS_ADHOC_PLATFORM_BATCH_ERROR {type(exc).__name__}: {exc}",
+                    flush=True,
+                )
+                try:
+                    await application.bot.send_message(
+                        settings.admin_id,
+                        "⚠️ <b>Falha no novo lote editorial</b>\n\n"
+                        f"<code>{_safe(str(exc), 320)}</code>",
+                    )
+                except Exception:
+                    pass
+            finally:
+                try:
+                    if should_resume:
+                        await site_queue.resume(application.bot, settings.admin_id)
+                except Exception as exc:
+                    print(
+                        f"IRIS_ADHOC_PLATFORM_BATCH_RESUME_ERROR {type(exc).__name__}: {exc}",
+                        flush=True,
+                    )
+
+        asyncio.create_task(
+            _adhoc_platform_batch_once(),
+            name="iris-adhoc-platform-batch-20260923",
+        )
+
     if settings.editorial_preview and settings.admin_id:
         async def _editorial_preview_once():
             await asyncio.sleep(3)
