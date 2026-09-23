@@ -206,7 +206,7 @@ def format_editorial_block(meta: dict | EditorialMetadata | None, *, max_chars: 
         body = prefix + " / ".join(kept)
         lines.append(f"<blockquote expandable>{html.escape(body)}</blockquote>")
 
-    return "\n".join(lines)
+    return "\n\n".join(lines)
 
 
 def format_video_caption(title: str | None, meta: dict | EditorialMetadata | None) -> str:
