@@ -74,6 +74,7 @@ def test_video_caption_keeps_editorial_block():
             "tags": ["bunda grande"],
         },
     )
-    assert caption.startswith("🎬 Título do vídeo")
-    assert "<b>🚫 #Mini_Gabys</b>" in caption
+    assert caption.startswith("<b>🚫 #Mini_Gabys</b>")
+    assert "🎬 Título do vídeo" not in caption
     assert "<blockquote expandable>" in caption
+    assert "\n\n<blockquote expandable>" in caption
