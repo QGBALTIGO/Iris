@@ -242,9 +242,7 @@ def format_editorial_block(meta: dict | EditorialMetadata | None, *, max_chars: 
 
     lines: list[str] = []
     if person:
-        person_tag = hashtag(person)
-        if person_tag:
-            lines.append(f"<b>🚫 {html.escape(person_tag)}</b>")
+        lines.append(f"<b>🚫 {html.escape(person)}</b>")
 
     tags = [hashtag(value) for value in combined]
     tags = [value for value in tags if value]
@@ -281,7 +279,7 @@ def format_video_caption(title: str | None, meta: dict | EditorialMetadata | Non
             return block[:1000]
 
     if combined:
-        headline = f"<b>🚫 {html.escape(hashtag(clean_title) or '#Vídeo')}</b>"
+        headline = f"<b>🚫 {html.escape(clean_title)}</b>"
         tag_only = format_editorial_block({
             "person": None,
             "categories": data.get("categories") or [],
@@ -290,4 +288,4 @@ def format_video_caption(title: str | None, meta: dict | EditorialMetadata | Non
         if tag_only:
             return (headline + "\n\n" + tag_only)[:1000]
 
-    return f"<b>🚫 {html.escape(hashtag(clean_title) or '#Vídeo')}</b>"[:1000]
+    return f"<b>🚫 {html.escape(clean_title)}</b>"[:1000]
