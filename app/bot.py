@@ -20,6 +20,7 @@ from app.jobs import JobStore
 from app.large_video_smoke import run_large_video_smoke
 from app.models import AnalyzeResult, DownloadJob, JobState, MediaResource, ResourceType
 from app.one_shot import run_one_shot
+from app.platform_batch import run_platform_batch
 from app.mtproto_speed_smoke import run_mtproto_speed_smoke
 from app.selftest import run_telegram_selftest
 from app.settings import settings
@@ -1732,6 +1733,52 @@ async def run_bot() -> None:
             except Exception as exc:
                 print(f"IRIS_EDITORIAL_PREVIEW_ERROR {type(exc).__name__}: {exc}", flush=True)
         asyncio.create_task(_editorial_preview_once(), name="iris-editorial-preview")
+
+    if settings.run_platform_batch and settings.admin_id:
+        async def _platform_batch_once():
+            await asyncio.sleep(4)
+            previous = site_queue.status()
+            should_resume = bool(previous.get("running") and not previous.get("paused"))
+            try:
+                site_queue.pause()
+                await application.bot.send_message(
+                    settings.admin_id,
+                    "🎬 <b>Teste editorial por plataforma</b>\n\n"
+                    "Enviando 3 TubePussy + 3 XVideosPutaria com pessoa em negrito "
+                    "e tags em citação expansiva.",
+                )
+                result = await run_platform_batch(application.bot)
+                print(
+                    "IRIS_PLATFORM_BATCH_DONE "
+                    + __import__("json").dumps(result, ensure_ascii=False),
+                    flush=True,
+                )
+                await application.bot.send_message(
+                    settings.admin_id,
+                    "✅ <b>Lote editorial concluído</b>\n\n"
+                    f"TubePussy: <b>{result.get('tubepussy', {}).get('sent', 0)}/3</b>\n"
+                    f"XVideosPutaria: <b>{result.get('xvideosputaria', {}).get('sent', 0)}/3</b>",
+                )
+            except Exception as exc:
+                print(f"IRIS_PLATFORM_BATCH_ERROR {type(exc).__name__}: {exc}", flush=True)
+                try:
+                    await application.bot.send_message(
+                        settings.admin_id,
+                        "⚠️ <b>Falha no lote editorial</b>\n\n"
+                        f"<code>{_safe(str(exc), 320)}</code>",
+                    )
+                except Exception:
+                    pass
+            finally:
+                if should_resume:
+                    try:
+                        await site_queue.resume(application.bot, settings.admin_id)
+                    except Exception as exc:
+                        print(
+                            f"IRIS_PLATFORM_BATCH_RESUME_ERROR {type(exc).__name__}: {exc}",
+                            flush=True,
+                        )
+        asyncio.create_task(_platform_batch_once(), name="iris-platform-batch")
 
     if settings.one_shot_url and settings.admin_id:
         async def _one_shot_once():
