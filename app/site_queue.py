@@ -584,7 +584,8 @@ class SiteQueueManager:
         with self._connect() as db:
             rows = db.execute(
                 """
-                SELECT id, url, title, media_url, media_source, sent_at
+                SELECT id, url, title, media_url, media_source,
+                       sent_message_id, sent_at
                 FROM queue_items
                 WHERE site=? AND status='sent' AND channel_sent_at IS NULL
                 ORDER BY sent_at ASC, id ASC
