@@ -235,7 +235,7 @@ async def _service_registry_check() -> str:
         "globoplay": "https://globoplay.globo.com/v/x",
         "hidive": "https://www.hidive.com/video/x",
         "adn": "https://animationdigitalnetwork.fr/video/x",
-        "animeonlinecc": "https://animesonlinecc.to/episodio/x/",
+        "animefire": "https://animefire.io/anime/eU7t5IvcNKU",
         "tubepussy": "https://tubepussy.org/x/",
         "xvideosputaria": "https://xvideosputaria.com/x/",
         "mangaplus": "https://mangaplus.shueisha.co.jp/viewer/1",
@@ -470,9 +470,9 @@ async def run_admin_test_suite(bot, admin_id: int) -> list[Check]:
 
         real_sites = [
             (
-                "AnimeOnlineCC",
-                "https://animesonlinecc.to/episodio/black-clover-episodio-170/",
-                True,
+                "AnimeFire",
+                "https://animefire.io/anime/eU7t5IvcNKU",
+                False,
                 False,
             ),
             (
