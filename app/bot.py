@@ -550,8 +550,14 @@ async def run_bot() -> None:
                 )
             ]
         ])
+        cached_start_video = Path("/data/iris_start_video.mp4")
+        video_source = (
+            cached_start_video
+            if cached_start_video.exists()
+            else settings.start_video_file_id
+        )
         await message.reply_video(
-            video=settings.start_video_file_id,
+            video=video_source,
             caption=caption,
             reply_markup=markup,
             supports_streaming=True,
@@ -1528,6 +1534,32 @@ async def run_bot() -> None:
             f"IRIS_START_VIDEO_ERROR {type(exc).__name__}: {str(exc)[:300]}",
             flush=True,
         )
+        try:
+            from telethon import utils as telethon_utils  # type: ignore
+
+            cached_start_video = Path("/data/iris_start_video.mp4")
+            if not cached_start_video.exists():
+                media = telethon_utils.resolve_bot_file_id(settings.start_video_file_id)
+                if media is None:
+                    raise RuntimeError("Telethon não reconheceu o file_id do vídeo")
+                client = await userbot.client()
+                downloaded = await client.download_media(
+                    media,
+                    file=str(cached_start_video),
+                )
+                if not downloaded or not cached_start_video.exists():
+                    raise RuntimeError("MTProto não conseguiu baixar o vídeo")
+            print(
+                f"IRIS_START_VIDEO_CACHE_OK path={cached_start_video} "
+                f"bytes={cached_start_video.stat().st_size}",
+                flush=True,
+            )
+        except Exception as cache_exc:
+            print(
+                f"IRIS_START_VIDEO_CACHE_ERROR {type(cache_exc).__name__}: "
+                f"{str(cache_exc)[:300]}",
+                flush=True,
+            )
 
     try:
         await application.bot.set_my_commands(
