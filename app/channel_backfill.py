@@ -86,7 +86,7 @@ class ChannelBackfill:
             or fallback_title
             or Path(path).stem
         )
-        caption = f"🎬 <b>{html.escape(str(title)[:220])}</b>"
+        caption = f"🎬 {str(title)[:220]}"
         try:
             receipt = await self.delivery.send_path_to_delivery_channel(
                 path,
