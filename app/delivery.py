@@ -274,6 +274,7 @@ class DeliveryManager:
         queue_item_id: int | None = None,
         as_video: bool = False,
         progress_callback=None,
+        respect_channel_only: bool = True,
     ) -> dict[str, object]:
         if not path.is_file():
             raise FileNotFoundError(path)
@@ -281,7 +282,8 @@ class DeliveryManager:
             raise RuntimeError("Conta 06 não autenticada.")
 
         if (
-            as_video
+            respect_channel_only
+            and as_video
             and self.config.delivery_channel_only
             and self.config.delivery_channel_invite
         ):
