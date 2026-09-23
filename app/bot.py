@@ -150,7 +150,8 @@ def delivery_caption(resource: MediaResource | None, *, as_video: bool = False) 
         title = resource.title or resource.metadata.get("page_title")
     title = title or ("Vídeo" if as_video else "Arquivo")
     icon = "🎬" if as_video else "📦"
-    clean_title = " ".join(str(title).replace("\n", " ").split())[:220]\n    return f"{icon} {clean_title}"
+    clean_title = " ".join(str(title).replace("\n", " ").split())[:220]
+    return f"{icon} {clean_title}"
 
 
 def _manifest_resources(result: AnalyzeResult) -> list[MediaResource]:
