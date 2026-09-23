@@ -1,31 +1,34 @@
-from app.platform_batch import _file_fingerprint, _fixed_test_caption
+from app.editorial import format_video_caption
+from app.platform_batch import _file_fingerprint
 
 
-def test_platform_caption_matches_requested_fixed_format():
-    caption = _fixed_test_caption(
-        "tubepussy",
-        {"person": "Ruiva Isabell"},
+def test_platform_caption_uses_metadata_from_each_video():
+    first = format_video_caption(
+        "Primeiro vídeo",
+        {
+            "person": "Pessoa Um",
+            "categories": ["Categoria A"],
+            "tags": ["tag um", "tag dois"],
+        },
     )
-    assert caption == (
-        "<b>🚫 #Ruiva_Isabell</b>\n\n"
-        "<blockquote expandable>"
-        "🔎 Tags: #Pornô_Longo / #Famosas / #Lésbicas / #Boquetes / #Anal / "
-        "#Gostosas / #Novinhas / #Coroas / #Bucetas / #Peitudas / #Mini_Gabys / "
-        "#Bundas / #Anã / #Chupando_Buceta / #Gozada_Na_Cara / #Mamando_Rola / "
-        "#Pack / #Peitos_Naturais"
-        "</blockquote>"
+    second = format_video_caption(
+        "Segundo vídeo",
+        {
+            "person": "Pessoa Dois",
+            "categories": ["Categoria B"],
+            "tags": ["tag três"],
+        },
     )
 
+    assert "#Pessoa_Um" in first
+    assert "#Categoria_A" in first
+    assert "#Tag_Um" in first
+    assert "#Tag_Dois" in first
 
-def test_platform_caption_uses_video_person_but_keeps_fixed_tags():
-    caption = _fixed_test_caption(
-        "xvideosputaria",
-        {"person": "Mini Gabys", "tags": ["outra tag"]},
-    )
-    assert caption.startswith("<b>🚫 #Mini_Gabys</b>")
-    assert "#Pornô_Longo" in caption
-    assert "#Peitos_Naturais" in caption
-    assert "#Outra_Tag" not in caption
+    assert "#Pessoa_Dois" in second
+    assert "#Categoria_B" in second
+    assert "#Tag_Três" in second
+    assert first != second
 
 
 def test_file_fingerprint_matches_identical_payloads(tmp_path):
