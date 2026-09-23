@@ -11,6 +11,7 @@ from urllib.parse import unquote, urlsplit
 from app.admin_test_suite import run_admin_test_suite
 from app.analyzer import Analyzer
 from app.benchmark import run_admin_benchmark
+from app.channel_backfill import channel_backfill
 from app.content import chapter_pages, content_images, content_summary
 from app.delivery import DeliveryManager, build_pdf, build_zip, human_bytes, parse_relay_payload
 from app.jobs import JobStore
@@ -1561,6 +1562,61 @@ async def run_bot() -> None:
                 f"Não consegui iniciar o login automaticamente: <code>{_safe(str(exc), 160)}</code>",
             )
 
+    channel_ready = True
+    if settings.delivery_channel_only and settings.delivery_channel_invite:
+        try:
+            channel_info = await delivery.delivery_channel_info()
+            print(
+                "IRIS_DELIVERY_CHANNEL "
+                + " ".join(f"{key}={value}" for key, value in (channel_info or {}).items()),
+                flush=True,
+            )
+            if not channel_info or not channel_info.get("can_post"):
+                channel_ready = False
+                site_queue.pause()
+                if settings.admin_id:
+                    await application.bot.send_message(
+                        settings.admin_id,
+                        "⚠️ <b>Canal de entrega sem permissão</b>\n\n"
+                        "A Conta 06 conseguiu localizar o canal, mas não pode publicar nele. "
+                        "A fila foi pausada para não voltar a enviar vídeos no seu PV.",
+                    )
+        except Exception as exc:
+            channel_ready = False
+            site_queue.pause()
+            print(f"IRIS_DELIVERY_CHANNEL_ERROR {type(exc).__name__}: {exc}", flush=True)
+            if settings.admin_id:
+                await application.bot.send_message(
+                    settings.admin_id,
+                    "⚠️ <b>Não consegui preparar o canal de entrega</b>\n\n"
+                    f"<code>{_safe(str(exc), 260)}</code>\n\n"
+                    "A fila foi pausada; nenhum vídeo será enviado no PV.",
+                )
+
+    if (
+        channel_ready
+        and settings.backfill_channel_history
+        and settings.delivery_channel_invite
+    ):
+        async def _channel_backfill_once():
+            await asyncio.sleep(4)
+            try:
+                result = await channel_backfill.run(application.bot)
+                print(
+                    f"IRIS_CHANNEL_BACKFILL_DONE sent={result['sent']} failed={result['failed']}",
+                    flush=True,
+                )
+                if settings.admin_id:
+                    await application.bot.send_message(
+                        settings.admin_id,
+                        "📚 <b>Migração para o canal</b>\n\n"
+                        f"✅ Enviados: <b>{result['sent']}</b>\n"
+                        f"⚠️ Falhas: <b>{result['failed']}</b>",
+                    )
+            except Exception as exc:
+                print(f"IRIS_CHANNEL_BACKFILL_FATAL {type(exc).__name__}: {exc}", flush=True)
+        asyncio.create_task(_channel_backfill_once(), name="iris-channel-backfill")
+
     try:
         queue_state = site_queue.status()
         print("IRIS_QUEUE_STATE " + site_queue.summary_for_logs(), flush=True)
@@ -1591,7 +1647,7 @@ async def run_bot() -> None:
             counts = queue_state.get("counts") or {}
             pending = int(counts.get("pending", 0)) + int(counts.get("retry_local", 0))
 
-            if queue_state.get("running") and not queue_state.get("paused"):
+            if channel_ready and queue_state.get("running") and not queue_state.get("paused"):
                 resumed = await site_queue.maybe_resume(application.bot)
                 if resumed and settings.admin_id:
                     await application.bot.send_message(
@@ -1600,7 +1656,8 @@ async def run_bot() -> None:
                         "Continuando do ponto salvo antes do reinício.",
                     )
             elif (
-                settings.site_queue_auto_start
+                channel_ready
+                and settings.site_queue_auto_start
                 and settings.admin_id
                 and not queue_state.get("running")
                 and pending > 0
@@ -1613,7 +1670,8 @@ async def run_bot() -> None:
                     "Continuando de onde parou.",
                 )
             elif (
-                settings.site_queue_auto_start
+                channel_ready
+                and settings.site_queue_auto_start
                 and settings.admin_id
                 and not queue_state.get("last_started_at")
             ):
