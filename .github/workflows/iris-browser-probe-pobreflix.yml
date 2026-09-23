@@ -1,0 +1,44 @@
+name: Iris browser probe debug Pobreflix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/iris-browser-probe-pobreflix.yml"
+
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -r requirements-dev.txt
+      - run: python -m playwright install --with-deps chromium
+      - name: Run Iris browser probe exactly
+        run: |
+          python - <<'PY'
+          import asyncio, json
+          from app.extractors.browser import probe_browser
+
+          URL="https://www.pobrenow.com/filme/vamos-time-2026"
+
+          async def main():
+              rows=await probe_browser(URL,max_requests=3000,timeout_ms=25000,interaction_rounds=12,disable_gpu=True)
+              print("IRIS_BROWSER_DEBUG "+json.dumps([
+                {
+                  "url":r.url,
+                  "type":r.type.value,
+                  "source":r.source,
+                  "mime":r.mime_type,
+                  "status":r.metadata.get("status"),
+                  "hls_segment":r.metadata.get("hls_segment"),
+                  "dynamic_frame":r.metadata.get("dynamic_frame"),
+                }
+                for r in rows
+              ],ensure_ascii=False))
+
+          asyncio.run(main())
+          PY
