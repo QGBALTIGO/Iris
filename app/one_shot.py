@@ -51,13 +51,7 @@ async def run_one_shot(bot) -> dict:
         or result.title
         or Path(path).stem
     )
-    caption = (
-        f"🎬 <b>{html.escape(str(title)[:220])}</b>\n"
-        f"📐 {info.width}×{info.height}\n"
-        f"🎞 {html.escape((info.codec or '?').upper())}"
-        + (f" + {html.escape((info.audio_codec or '').upper())}" if info.audio_codec else "")
-        + "\n\n✨ <i>IRIS</i>"
-    )
+    caption = f"🎬 <b>{html.escape(str(title)[:220])}</b>"
 
     try:
         await delivery.send_path_to_chat(
