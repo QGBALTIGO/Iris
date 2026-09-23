@@ -25,7 +25,6 @@ from app.mtproto_speed_smoke import run_mtproto_speed_smoke
 from app.selftest import run_telegram_selftest
 from app.settings import settings
 from app.service_registry import detect_service
-from app.popular_queue import popular_queue
 from app.site_queue import site_queue
 from app.source_speed_smoke import run_source_speed_smoke
 from app.userbot import userbot
@@ -1725,31 +1724,6 @@ async def run_bot() -> None:
     except Exception as exc:
         print(f"IRIS_QUEUE_RESUME_ERROR {type(exc).__name__}: {exc}", flush=True)
 
-    if settings.popular_queue_enabled:
-        async def _popular_queue_start():
-            await asyncio.sleep(5)
-            try:
-                await popular_queue.start(application.bot)
-            except Exception as exc:
-                print(
-                    f"IRIS_POPULAR_START_ERROR {type(exc).__name__}: {str(exc)[:320]}",
-                    flush=True,
-                )
-                if settings.admin_id:
-                    try:
-                        await application.bot.send_message(
-                            settings.admin_id,
-                            "⚠️ <b>Fila dos mais populares não iniciou</b>\n\n"
-                            f"<code>{_safe(str(exc), 320)}</code>",
-                        )
-                    except Exception:
-                        pass
-
-        asyncio.create_task(
-            _popular_queue_start(),
-            name="iris-popular-queue-start",
-        )
-
     if settings.editorial_preview and settings.admin_id:
         async def _editorial_preview_once():
             await asyncio.sleep(3)
@@ -1928,7 +1902,6 @@ async def run_bot() -> None:
                 await site_queue.task
             except asyncio.CancelledError:
                 pass
-        await popular_queue.close()
         await userbot.close()
         await application.updater.stop()
         await application.stop()
