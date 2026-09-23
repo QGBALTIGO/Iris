@@ -1485,18 +1485,10 @@ async def run_bot() -> None:
             if result:
                 await launch_download(query, resources_for_bucket(result, bucket), delivery_mode=mode)
 
+    # Only /start is exposed as a Telegram command.
+    # The other command functions remain available in the code for internal
+    # workflows, but are intentionally not registered as public slash commands.
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("ajuda", help_cmd))
-    application.add_handler(CommandHandler("help", help_cmd))
-    application.add_handler(CommandHandler("status", admin_status))
-    application.add_handler(CommandHandler("downloads", admin_jobs))
-    application.add_handler(CommandHandler("jobs", admin_jobs))
-    application.add_handler(CommandHandler("conta06", admin_userbot))
-    application.add_handler(CommandHandler("diagnostico", admin_diag))
-    application.add_handler(CommandHandler("testes", admin_tests))
-    application.add_handler(CommandHandler("limpar", admin_clean))
-    application.add_handler(CommandHandler("fila", admin_queue))
-    application.add_handler(CommandHandler("retomar", admin_queue))
     application.add_handler(CallbackQueryHandler(callbacks))
 
     media_filter = (
@@ -1515,10 +1507,7 @@ async def run_bot() -> None:
 
     try:
         await application.bot.set_my_commands(
-            [
-                BotCommand("start", "Abrir o Iris"),
-                BotCommand("ajuda", "Como usar"),
-            ],
+            [BotCommand("start", "Abrir o Iris")],
             scope=BotCommandScopeDefault(),
         )
     except Exception as exc:
@@ -1527,18 +1516,7 @@ async def run_bot() -> None:
     if settings.admin_id:
         try:
             await application.bot.set_my_commands(
-                [
-                    BotCommand("start", "Abrir o Iris"),
-                    BotCommand("ajuda", "Como usar"),
-                    BotCommand("status", "Status administrativo"),
-                    BotCommand("downloads", "Downloads recentes"),
-                    BotCommand("conta06", "Conectar a Conta 06"),
-                    BotCommand("diagnostico", "Testar entregas"),
-                    BotCommand("testes", "Bateria completa do Iris"),
-                    BotCommand("limpar", "Limpar temporários"),
-                    BotCommand("fila", "Fila persistente do site"),
-                    BotCommand("retomar", "Continuar fila de onde parou"),
-                ],
+                [BotCommand("start", "Abrir o Iris")],
                 scope=BotCommandScopeChat(chat_id=settings.admin_id),
             )
         except Exception as exc:
