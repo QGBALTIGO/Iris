@@ -5,6 +5,7 @@ from contextlib import suppress
 from pathlib import Path
 
 from app.classifier import classify_resource
+from app.editorial import extract_editorial_metadata
 from app.models import MediaResource, ResourceType
 from app.security import UnsafeUrlError, validate_public_url
 
@@ -256,6 +257,11 @@ async def probe_browser(
                 elif round_index >= 4 and stable_rounds >= 3:
                     break
 
+            page_editorial = None
+            with suppress(Exception):
+                page_html = await page.content()
+                page_editorial = extract_editorial_metadata(page_html, page.url).as_dict()
+
             with suppress(Exception):
                 extra_urls = await page.evaluate(
                     """() => {
@@ -317,6 +323,14 @@ async def probe_browser(
                         metadata={"navigation_only": True, "dynamic_frame": True},
                     )
                 )
+            if page_editorial:
+                for item in found:
+                    item.metadata.setdefault("editorial", page_editorial)
+                    page_title = page_editorial.get("title")
+                    if page_title:
+                        item.metadata.setdefault("page_title", page_title)
+                        if not item.title:
+                            item.title = page_title
         finally:
             await context.close()
             await browser.close()
