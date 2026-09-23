@@ -345,10 +345,14 @@ async def run_bot() -> None:
         label = await userbot.account_label() if ready else "desconectada"
         await update.effective_message.reply_text(
             "🛠️ <b>Status administrativo</b>\n\n"
-            f"🌐 Playwright: {'✅' if settings.browser_enabled else '❌'}\n"
+            f"🌐 Playwright: {'✅' if settings.browser_enabled else '❌'}"
+            f" • GPU {'OFF' if settings.browser_disable_gpu else 'ON'}\n"
             f"🎞️ yt-dlp: {'✅' if settings.ytdlp_enabled and shutil.which('yt-dlp') else '❌'}\n"
+            f"🚀 N_m3u8DL-RE: {'✅' if shutil.which('N_m3u8DL-RE') else '❌'}\n"
+            f"📡 Streamlink: {'✅' if shutil.which('streamlink') else '❌'}\n"
             f"⚡ aria2: {'✅' if shutil.which('aria2c') else '❌'}\n"
             f"🎛️ FFmpeg: {'✅' if shutil.which('ffmpeg') else '❌'}\n"
+            f"🧰 MKVToolNix: {'✅' if shutil.which('mkvmerge') else '❌'}\n"
             f"👤 Conta 06: {'✅' if ready else '❌'} {_safe(label, 80)}\n"
             f"🔀 Downloads paralelos: <b>{settings.download_concurrency}</b>"
         )
