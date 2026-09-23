@@ -115,35 +115,37 @@ def extract_editorial_metadata(page_html: str, page_url: str) -> EditorialMetada
         # so only non-numeric single-segment short links are metadata.
         path = urlsplit(page_url).path.lower()
         if re.fullmatch(r"/shorts/\d+/?", path):
-            short_taxonomy_links = []
-            for a in soup.select('a[href*="/shorts/"]'):
+            def _is_short_taxonomy_link(a) -> bool:
                 href = (a.get("href") or "").split("?", 1)[0].split("#", 1)[0]
                 href_path = urlsplit(href).path if "://" in href else href
                 match = re.fullmatch(r"/shorts/([^/]+)/?", href_path)
                 if not match:
-                    continue
+                    return False
                 slug = match.group(1).strip().lower()
                 if not slug or slug.isdigit():
-                    continue
+                    return False
                 value = _clean(a.get_text(" ", strip=True))
-                if not value or not value.startswith("#"):
-                    continue
-                short_taxonomy_links.append(a)
+                return bool(value and value.startswith("#"))
 
-            # The first hashtag cluster belongs to the current short. Avoid
-            # collecting taxonomy links from recommended videos lower down.
-            if short_taxonomy_links:
-                cluster: list = []
-                first = short_taxonomy_links[0]
-                parent = first.parent
-                if parent is not None:
-                    cluster = [
-                        a for a in parent.select('a[href*="/shorts/"]')
-                        if a in short_taxonomy_links
-                    ]
-                if not cluster:
-                    cluster = short_taxonomy_links[:8]
-                tags.extend(_texts(cluster))
+            # The taxonomy for the current short is rendered immediately
+            # before the page H1. Recommended shorts and their tags are below
+            # the H1, so restricting to previous anchors avoids pollution.
+            heading = soup.find("h1")
+            if heading is not None:
+                current_short_links = [
+                    a for a in reversed(heading.find_all_previous("a"))
+                    if _is_short_taxonomy_link(a)
+                ]
+            else:
+                current_short_links = []
+
+            if not current_short_links:
+                current_short_links = [
+                    a for a in soup.select('a[href*="/shorts/"]')
+                    if _is_short_taxonomy_link(a)
+                ][:8]
+
+            tags.extend(_texts(current_short_links))
 
     elif "xvideosputaria.com" in host:
         # WordPress-style taxonomies plus class/id based fallbacks.
