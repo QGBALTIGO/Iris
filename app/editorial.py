@@ -110,42 +110,38 @@ def extract_editorial_metadata(page_html: str, page_url: str) -> EditorialMetada
             tags.extend(_texts(soup.select('a[href*="/tags/"]')))
 
         # TubePussy Shorts uses a different taxonomy layout. On /shorts/<id>/
-        # pages the visible hashtags link to /shorts/<taxonomy-slug>/ rather
-        # than /tags/ or /categories/. Numeric /shorts/<id>/ links are videos,
-        # so only non-numeric single-segment short links are metadata.
+        # pages the current video's hashtags live in the dedicated sidebar
+        # info panel (#shortsInfoPanel .sp-tags). Using that container avoids
+        # pulling tags from recommended shorts rendered on the same page.
         path = urlsplit(page_url).path.lower()
         if re.fullmatch(r"/shorts/\d+/?", path):
-            def _is_short_taxonomy_link(a) -> bool:
-                href = (a.get("href") or "").split("?", 1)[0].split("#", 1)[0]
-                href_path = urlsplit(href).path if "://" in href else href
-                match = re.fullmatch(r"/shorts/([^/]+)/?", href_path)
-                if not match:
-                    return False
-                slug = match.group(1).strip().lower()
-                if not slug or slug.isdigit():
-                    return False
-                value = _clean(a.get_text(" ", strip=True))
-                return bool(value and value.startswith("#"))
-
-            # The taxonomy for the current short is rendered immediately
-            # before the page H1. Recommended shorts and their tags are below
-            # the H1, so restricting to previous anchors avoids pollution.
-            heading = soup.find("h1")
-            if heading is not None:
-                current_short_links = [
-                    a for a in reversed(heading.find_all_previous("a"))
-                    if _is_short_taxonomy_link(a)
-                ]
-            else:
-                current_short_links = []
+            current_short_links = list(
+                soup.select(
+                    "#shortsInfoPanel .sp-tags a, "
+                    ".shorts-info-panel .sp-tags a"
+                )
+            )
 
             if not current_short_links:
-                current_short_links = [
-                    a for a in soup.select('a[href*="/shorts/"]')
-                    if _is_short_taxonomy_link(a)
-                ][:8]
+                # Mobile/alternate layout: the first .video-data block belongs
+                # to the current short, while subsequent blocks are related
+                # shorts.
+                current_video_data = soup.select_one(".video-data")
+                if current_video_data is not None:
+                    current_short_links = list(
+                        current_video_data.select(".tags-container a.video-tag")
+                    )
 
-            tags.extend(_texts(current_short_links))
+            if not current_short_links:
+                # Last-resort metadata tags emitted by the page head.
+                meta_tags = [
+                    _clean(node.get("content"))
+                    for node in soup.select('meta[property="video:tag"]')
+                    if node.get("content")
+                ]
+                tags.extend([value for value in meta_tags if value])
+            else:
+                tags.extend(_texts(current_short_links))
 
     elif "xvideosputaria.com" in host:
         # WordPress-style taxonomies plus class/id based fallbacks.
