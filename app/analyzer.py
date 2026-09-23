@@ -15,7 +15,6 @@ from app.extractors.html import extract_html_resources
 from app.extractors.ytdlp import probe_ytdlp
 from app.fetcher import SafeFetcher
 from app.models import AnalyzeResult, MediaResource, ResourceType
-from app.protection import detect_dash_protection, detect_hls_protection, detect_streaming_service
 from app.settings import Settings, settings
 
 
@@ -126,36 +125,14 @@ class Analyzer:
         await self._annotate_chapter_exportability(resources, warnings)
         await self._inspect_manifests(resources, warnings)
 
-        service = detect_streaming_service(final_url) or detect_streaming_service(str(url))
-        drm_systems: set[str] = set()
-        for resource in resources:
-            resource_service = detect_streaming_service(resource.url) or service
-            if resource_service:
-                resource.metadata.setdefault("service", resource_service)
-            if resource.drm:
-                resource.metadata.setdefault("protection", "drm")
-            elif resource.encrypted:
-                resource.metadata.setdefault("protection", "encrypted")
-            else:
-                resource.metadata.setdefault("protection", "clear")
-            for system in resource.metadata.get("drm_systems") or []:
-                if isinstance(system, str) and system:
-                    drm_systems.add(system)
-
         if any(item.drm for item in resources):
-            protection = ", ".join(sorted(drm_systems)) if drm_systems else "sistema não identificado"
-            warnings.append(
-                f"Mídia protegida por DRM detectada ({protection}); "
-                "o Iris informa a proteção, mas não tenta contorná-la."
-            )
+            warnings.append("Mídia protegida por DRM detectada; o Iris informa a proteção, mas não tenta contorná-la.")
 
         return AnalyzeResult(
             url=str(url),
             final_url=final_url,
             title=title,
             content_type=content_type,
-            service=service,
-            drm_systems=sorted(drm_systems),
             resources=resources,
             warnings=list(dict.fromkeys(warnings)),
         )
@@ -276,24 +253,15 @@ class Analyzer:
             lower_url = resource.url.lower()
             if ".m3u8" in lower_url or "mpegurl" in (result.content_type or "").lower():
                 variants, encrypted, drm = inspect_hls(text, resource.url)
-                protection = detect_hls_protection(text)
                 resource.variants = variants
                 resource.encrypted = encrypted
                 resource.drm = drm
-                if protection.systems:
-                    resource.metadata["drm_systems"] = list(protection.systems)
             elif ".mpd" in lower_url or "dash+xml" in (result.content_type or "").lower():
                 variants, drm = inspect_mpd(text, resource.url)
-                protection = detect_dash_protection(text)
                 resource.variants = variants
-                resource.encrypted = protection.encrypted
                 resource.drm = drm
-                if protection.systems:
-                    resource.metadata["drm_systems"] = list(protection.systems)
             if resource.drm:
-                systems = resource.metadata.get("drm_systems") or []
-                detail = f" ({', '.join(systems)})" if systems else ""
-                warnings.append(f"Uma playlist protegida por DRM foi detectada{detail}.")
+                warnings.append("Uma playlist protegida por DRM foi detectada.")
 
 
 def _valid_image_payload(data: bytes) -> bool:
