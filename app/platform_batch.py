@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import html
 import json
 import re
 from pathlib import Path
@@ -10,7 +9,7 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 
 from app.analyzer import Analyzer
 from app.delivery import DeliveryManager
-from app.editorial import extract_editorial_metadata, hashtag
+from app.editorial import extract_editorial_metadata, format_video_caption
 from app.settings import settings
 from app.video_candidates import download_first_valid_video
 
@@ -18,42 +17,6 @@ _SEEDS = {
     "tubepussy": "https://tubepussy.org/ruiva-isabel-dando-a-bucetinha-e-levando-na-cara/#forward",
     "xvideosputaria": "https://xvideosputaria.com/anao-gabriela-gadotti-mini-gabys-boquetando-com-leite-na-boca/#forward",
 }
-
-_FIXED_TAGS = [
-    "#Pornô_Longo",
-    "#Famosas",
-    "#Lésbicas",
-    "#Boquetes",
-    "#Anal",
-    "#Gostosas",
-    "#Novinhas",
-    "#Coroas",
-    "#Bucetas",
-    "#Peitudas",
-    "#Mini_Gabys",
-    "#Bundas",
-    "#Anã",
-    "#Chupando_Buceta",
-    "#Gozada_Na_Cara",
-    "#Mamando_Rola",
-    "#Pack",
-    "#Peitos_Naturais",
-]
-
-_FALLBACK_PERSON = {
-    "tubepussy": "Ruiva Isabell",
-    "xvideosputaria": "Mini Gabys",
-}
-
-
-def _fixed_test_caption(platform: str, meta: dict | None) -> str:
-    person = str((meta or {}).get("person") or _FALLBACK_PERSON.get(platform) or "Vídeo")
-    person_tag = hashtag(person) or "#Vídeo"
-    body = "🔎 Tags: " + " / ".join(_FIXED_TAGS)
-    return (
-        f"<b>🚫 {html.escape(person_tag)}</b>\n\n"
-        f"<blockquote expandable>{html.escape(body)}</blockquote>"
-    )
 
 _SKIP_PREFIXES = (
     "/tag/",
@@ -318,7 +281,7 @@ async def run_platform_batch(bot) -> dict[str, object]:
                     or result.title
                     or Path(path).stem
                 )
-                caption = _fixed_test_caption(platform, meta)
+                caption = format_video_caption(title, meta)
 
                 receipt = await delivery.send_path_to_chat(
                     bot,
