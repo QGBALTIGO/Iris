@@ -109,6 +109,42 @@ def extract_editorial_metadata(page_html: str, page_url: str) -> EditorialMetada
         if not tags:
             tags.extend(_texts(soup.select('a[href*="/tags/"]')))
 
+        # TubePussy Shorts uses a different taxonomy layout. On /shorts/<id>/
+        # pages the visible hashtags link to /shorts/<taxonomy-slug>/ rather
+        # than /tags/ or /categories/. Numeric /shorts/<id>/ links are videos,
+        # so only non-numeric single-segment short links are metadata.
+        path = urlsplit(page_url).path.lower()
+        if re.fullmatch(r"/shorts/\d+/?", path):
+            short_taxonomy_links = []
+            for a in soup.select('a[href*="/shorts/"]'):
+                href = (a.get("href") or "").split("?", 1)[0].split("#", 1)[0]
+                href_path = urlsplit(href).path if "://" in href else href
+                match = re.fullmatch(r"/shorts/([^/]+)/?", href_path)
+                if not match:
+                    continue
+                slug = match.group(1).strip().lower()
+                if not slug or slug.isdigit():
+                    continue
+                value = _clean(a.get_text(" ", strip=True))
+                if not value or not value.startswith("#"):
+                    continue
+                short_taxonomy_links.append(a)
+
+            # The first hashtag cluster belongs to the current short. Avoid
+            # collecting taxonomy links from recommended videos lower down.
+            if short_taxonomy_links:
+                cluster: list = []
+                first = short_taxonomy_links[0]
+                parent = first.parent
+                if parent is not None:
+                    cluster = [
+                        a for a in parent.select('a[href*="/shorts/"]')
+                        if a in short_taxonomy_links
+                    ]
+                if not cluster:
+                    cluster = short_taxonomy_links[:8]
+                tags.extend(_texts(cluster))
+
     elif "xvideosputaria.com" in host:
         # WordPress-style taxonomies plus class/id based fallbacks.
         tag_links = list(soup.select('a[href*="/tag/"]'))
@@ -210,12 +246,28 @@ def format_editorial_block(meta: dict | EditorialMetadata | None, *, max_chars: 
 
 
 def format_video_caption(title: str | None, meta: dict | EditorialMetadata | None) -> str:
-    # Editorial videos use only the person + expandable tag block. This keeps
-    # the Telegram post clean and matches the Baltigo posting pattern.
-    block = format_editorial_block(meta)
-    if block:
-        return block[:1000]
-
-    # Fallback only when the source exposes no useful editorial metadata.
     clean_title = _clean(title) or "Vídeo"
+
+    data = meta.as_dict() if isinstance(meta, EditorialMetadata) else dict(meta or {})
+    person = _clean(data.get("person"))
+    combined = _dedupe(list(data.get("categories") or []) + list(data.get("tags") or []))
+
+    # If a real model/person exists, the editorial block already has the
+    # desired headline. For Shorts, where the site often exposes only title
+    # + hashtag taxonomy, use the page title as the headline and keep the tags.
+    if person:
+        block = format_editorial_block(data)
+        if block:
+            return block[:1000]
+
+    if combined:
+        headline = f"<b>🚫 {html.escape(hashtag(clean_title) or '#Vídeo')}</b>"
+        tag_only = format_editorial_block({
+            "person": None,
+            "categories": data.get("categories") or [],
+            "tags": data.get("tags") or [],
+        })
+        if tag_only:
+            return (headline + "\n\n" + tag_only)[:1000]
+
     return f"<b>🚫 {html.escape(hashtag(clean_title) or '#Vídeo')}</b>"[:1000]
