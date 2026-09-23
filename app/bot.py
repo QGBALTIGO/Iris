@@ -1594,7 +1594,7 @@ async def run_bot() -> None:
 
     try:
         await application.bot.set_my_commands(
-            [BotCommand("start", "Abrir o Iris")],
+            [BotCommand("start", "🔥 Que comece a diversão!")],
             scope=BotCommandScopeDefault(),
         )
     except Exception as exc:
@@ -1603,7 +1603,7 @@ async def run_bot() -> None:
     if settings.admin_id:
         try:
             await application.bot.set_my_commands(
-                [BotCommand("start", "Abrir o Iris")],
+                [BotCommand("start", "🔥 Que comece a diversão!")],
                 scope=BotCommandScopeChat(chat_id=settings.admin_id),
             )
         except Exception as exc:
