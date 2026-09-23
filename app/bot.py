@@ -1503,30 +1503,36 @@ async def run_bot() -> None:
 
     await application.initialize()
 
-    await application.bot.set_my_commands(
-        [
-            BotCommand("start", "Abrir o Iris"),
-            BotCommand("ajuda", "Como usar"),
-        ],
-        scope=BotCommandScopeDefault(),
-    )
-
-    if settings.admin_id:
+    try:
         await application.bot.set_my_commands(
             [
                 BotCommand("start", "Abrir o Iris"),
                 BotCommand("ajuda", "Como usar"),
-                BotCommand("status", "Status administrativo"),
-                BotCommand("downloads", "Downloads recentes"),
-                BotCommand("conta06", "Conectar a Conta 06"),
-                BotCommand("diagnostico", "Testar entregas"),
-                BotCommand("testes", "Bateria completa do Iris"),
-                BotCommand("limpar", "Limpar temporários"),
-                BotCommand("fila", "Fila persistente do site"),
-                BotCommand("retomar", "Continuar fila de onde parou"),
             ],
-            scope=BotCommandScopeChat(chat_id=settings.admin_id),
+            scope=BotCommandScopeDefault(),
         )
+    except Exception as exc:
+        print(f"IRIS_COMMANDS_DEFAULT_ERROR {type(exc).__name__}: {exc}", flush=True)
+
+    if settings.admin_id:
+        try:
+            await application.bot.set_my_commands(
+                [
+                    BotCommand("start", "Abrir o Iris"),
+                    BotCommand("ajuda", "Como usar"),
+                    BotCommand("status", "Status administrativo"),
+                    BotCommand("downloads", "Downloads recentes"),
+                    BotCommand("conta06", "Conectar a Conta 06"),
+                    BotCommand("diagnostico", "Testar entregas"),
+                    BotCommand("testes", "Bateria completa do Iris"),
+                    BotCommand("limpar", "Limpar temporários"),
+                    BotCommand("fila", "Fila persistente do site"),
+                    BotCommand("retomar", "Continuar fila de onde parou"),
+                ],
+                scope=BotCommandScopeChat(chat_id=settings.admin_id),
+            )
+        except Exception as exc:
+            print(f"IRIS_COMMANDS_ADMIN_ERROR {type(exc).__name__}: {exc}", flush=True)
 
     try:
         await application.bot.set_my_description(
