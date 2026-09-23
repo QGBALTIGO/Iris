@@ -197,6 +197,7 @@ class UserbotManager:
         caption: str | None = None,
         as_video: bool = False,
         progress_callback=None,
+        parse_mode=None,
     ):
         client = await self.client()
         if not await client.is_user_authorized():
@@ -244,6 +245,7 @@ class UserbotManager:
                 thumb=str(thumb) if thumb and thumb.exists() else None,
                 mime_type=mime_type,
                 progress_callback=progress_callback if upload_path_value is None else None,
+                parse_mode=parse_mode,
             )
         finally:
             if thumb:
@@ -270,6 +272,7 @@ class UserbotManager:
                 caption=caption,
                 as_video=as_video,
                 progress_callback=progress_callback,
+                parse_mode=parse_mode,
             )
 
     async def send_to_delivery_channel(
@@ -290,6 +293,7 @@ class UserbotManager:
                 caption=caption,
                 as_video=as_video,
                 progress_callback=progress_callback,
+                parse_mode=parse_mode,
             )
 
     async def repair_delivery_channel_captions(
@@ -303,37 +307,41 @@ class UserbotManager:
             target = await self.resolve_delivery_target(invite_url)
             scanned = 0
             edited = 0
+            failed = 0
 
             async for message in client.iter_messages(target, limit=limit):
                 scanned += 1
                 text = getattr(message, "message", None) or ""
-                if not text.startswith("🎬"):
+                if not text:
                     continue
 
-                cleaned = (
-                    text.replace("<b>", "")
-                    .replace("</b>", "")
-                    .replace("✨ IRIS", "")
-                    .replace("✨ <i>IRIS</i>", "")
-                    .strip()
+                has_raw_html = (
+                    "<b>" in text
+                    or "</b>" in text
+                    or "<blockquote" in text
+                    or "</blockquote>" in text
                 )
-                while "\n\n\n" in cleaned:
-                    cleaned = cleaned.replace("\n\n\n", "\n\n")
-                cleaned = cleaned.rstrip()
-
-                if cleaned == text:
+                if not has_raw_html:
                     continue
 
-                await client.edit_message(
-                    target,
-                    message.id,
-                    cleaned,
-                    parse_mode=None,
-                )
-                edited += 1
-                await asyncio.sleep(0.12)
+                try:
+                    await client.edit_message(
+                        target,
+                        message.id,
+                        text,
+                        parse_mode="html",
+                    )
+                    edited += 1
+                except Exception as exc:
+                    failed += 1
+                    print(
+                        f"IRIS_CAPTION_REPAIR_ERROR message={message.id} "
+                        f"{type(exc).__name__}: {str(exc)[:220]}",
+                        flush=True,
+                    )
+                await asyncio.sleep(0.18)
 
-            return {"scanned": scanned, "edited": edited}
+            return {"scanned": scanned, "edited": edited, "failed": failed}
 
     async def delete_from_bot_chat(self, bot_username: str, message_id: int) -> None:
         try:
