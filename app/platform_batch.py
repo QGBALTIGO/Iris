@@ -10,6 +10,7 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 from app.analyzer import Analyzer
 from app.delivery import DeliveryManager
 from app.editorial import extract_editorial_metadata, format_video_caption
+from app.extractors.browser import probe_browser
 from app.settings import settings
 from app.video_candidates import download_first_valid_video
 
@@ -167,7 +168,7 @@ def _looks_like_post(url: str, host: str) -> bool:
     return True
 
 
-async def _discover_related(seed: str, limit: int = 30) -> list[str]:
+async def _discover_related(seed: str, limit: int = 30) -> tuple[list[str], dict | None]:
     from playwright.async_api import async_playwright
 
     host = urlsplit(seed).netloc.lower().removeprefix("www.")
@@ -220,10 +221,11 @@ async def _discover_related(seed: str, limit: int = 30) -> list[str]:
         if len(candidates) < 8:
             await collect(f"https://{host}/")
 
+        storage_state = await context.storage_state()
         await context.close()
         await browser.close()
 
-    return candidates[:limit]
+    return candidates[:limit], storage_state
 
 
 async def _editorial_from_result(result, selected) -> dict | None:
@@ -297,7 +299,11 @@ def _file_fingerprint(path: Path) -> str:
     return digest.hexdigest()
 
 
-async def run_platform_batch(bot) -> dict[str, object]:
+async def run_platform_batch(
+    bot,
+    *,
+    platforms: set[str] | None = None,
+) -> dict[str, object]:
     if not settings.admin_id:
         raise RuntimeError("IRIS_ADMIN_ID não configurado")
 
@@ -310,7 +316,9 @@ async def run_platform_batch(bot) -> dict[str, object]:
     xvp_correction = settings.platform_batch_nonce == "editorial-xvp-v4-correction"
 
     for platform, seed in _SEEDS.items():
-        candidates = await _discover_related(seed, limit=60)
+        if platforms is not None and platform not in platforms:
+            continue
+        candidates, discovery_state = await _discover_related(seed, limit=60)
         sent = 0
         attempted = 0
         failures: list[str] = []
@@ -344,10 +352,55 @@ async def run_platform_batch(bot) -> dict[str, object]:
             attempted += 1
             path: Path | None = None
             try:
-                result = await analyzer.analyze(page_url, deep=True)
-                selected, path, generated, info, rejected = await download_first_valid_video(
-                    result.resources
-                )
+                if platform == "xvideosputaria" and discovery_state:
+                    browser_resources = await probe_browser(
+                        page_url,
+                        max_requests=max(settings.max_browser_requests, 2200),
+                        timeout_ms=22_000,
+                        interaction_rounds=12,
+                        disable_gpu=settings.browser_disable_gpu,
+                        storage_state=discovery_state,
+                    )
+                    # Follow player frames inside the same authenticated browser
+                    # state when the outer page did not expose media directly.
+                    primary = [
+                        item for item in browser_resources
+                        if item.type.value in {"video", "playlist", "stream"}
+                        and not item.metadata.get("hls_segment")
+                        and not item.metadata.get("navigation_only")
+                    ]
+                    if not primary:
+                        frames = [
+                            item for item in browser_resources
+                            if item.source == "browser:frame"
+                            and item.metadata.get("navigation_only")
+                        ]
+                        for frame in frames[:4]:
+                            nested = await probe_browser(
+                                frame.url,
+                                max_requests=min(settings.max_browser_requests, 1800),
+                                timeout_ms=18_000,
+                                interaction_rounds=8,
+                                disable_gpu=settings.browser_disable_gpu,
+                                storage_state=discovery_state,
+                            )
+                            for item in nested:
+                                item.metadata.setdefault("embed_parent", page_url)
+                            browser_resources.extend(nested)
+
+                    selected, path, generated, info, rejected = await download_first_valid_video(
+                        browser_resources
+                    )
+                    class _BrowserResult:
+                        resources = browser_resources
+                        title = selected.metadata.get("page_title") or selected.title
+                    result = _BrowserResult()
+                else:
+                    result = await analyzer.analyze(page_url, deep=True)
+                    selected, path, generated, info, rejected = await download_first_valid_video(
+                        result.resources
+                    )
+
                 media_key = _media_key(selected.url)
                 fingerprint = _file_fingerprint(path)
                 if media_key in seen_media or fingerprint in seen_fingerprints:
