@@ -251,6 +251,8 @@ class DownloadEngine:
                 "--no-playlist",
                 "--newline",
                 "--concurrent-fragments", "12",
+                "--impersonate", "chrome",
+                "--extractor-args", "generic:impersonate=chrome",
             ]
             if preferred_height:
                 cmd.extend([
