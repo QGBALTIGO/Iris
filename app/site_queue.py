@@ -618,6 +618,10 @@ class SiteQueueManager:
             channel_message_id=message_id,
             channel_sent_at=time.time(),
         )
+        print(
+            f"IRIS_LEGENDADOS_SENT item={item_id} message={message_id}",
+            flush=True,
+        )
 
     async def wait_delivery(self, item_id: int, timeout: float = 180.0) -> str:
         started = time.monotonic()
