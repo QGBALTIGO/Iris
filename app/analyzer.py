@@ -15,6 +15,8 @@ from app.extractors.html import extract_html_resources
 from app.extractors.ytdlp import probe_ytdlp
 from app.fetcher import SafeFetcher
 from app.models import AnalyzeResult, MediaResource, ResourceType
+from app.manifest_tracks import dash_track_details, hls_track_details
+from app.service_registry import detect_service
 from app.settings import Settings, settings
 
 
@@ -104,6 +106,11 @@ class Analyzer:
                 warnings.append(f"Navegador indisponível: {type(exc).__name__}")
 
         resources = [r for r in deduplicate(resources) if not r.metadata.get("navigation_only")]
+        service_profile = detect_service(final_url)
+        for resource in resources:
+            resource.metadata.setdefault("service_key", service_profile.key)
+            resource.metadata.setdefault("service_label", service_profile.label)
+            resource.metadata.setdefault("strategies", list(service_profile.strategies))
         if title:
             clean_title = _clean_media_title(title, final_url)
             for resource in resources:
@@ -253,15 +260,26 @@ class Analyzer:
             lower_url = resource.url.lower()
             if ".m3u8" in lower_url or "mpegurl" in (result.content_type or "").lower():
                 variants, encrypted, drm = inspect_hls(text, resource.url)
+                details = hls_track_details(text, resource.url)
                 resource.variants = variants
                 resource.encrypted = encrypted
                 resource.drm = drm
+                resource.metadata["audio_tracks"] = details["audio_tracks"]
+                resource.metadata["subtitle_tracks"] = details["subtitle_tracks"]
+                resource.metadata["drm_systems"] = details["drm_systems"]
             elif ".mpd" in lower_url or "dash+xml" in (result.content_type or "").lower():
                 variants, drm = inspect_mpd(text, resource.url)
+                details = dash_track_details(text, resource.url)
                 resource.variants = variants
+                resource.encrypted = bool(details["encrypted"])
                 resource.drm = drm
+                resource.metadata["audio_tracks"] = details["audio_tracks"]
+                resource.metadata["subtitle_tracks"] = details["subtitle_tracks"]
+                resource.metadata["drm_systems"] = details["drm_systems"]
             if resource.drm:
-                warnings.append("Uma playlist protegida por DRM foi detectada.")
+                systems = resource.metadata.get("drm_systems") or []
+                suffix = f" ({', '.join(systems)})" if systems else ""
+                warnings.append(f"Uma playlist protegida por DRM foi detectada{suffix}.")
 
 
 def _valid_image_payload(data: bytes) -> bool:
