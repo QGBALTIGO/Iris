@@ -38,6 +38,7 @@ async def probe_browser(
     max_requests: int = 1200,
     interaction_rounds: int = 8,
     disable_gpu: bool = False,
+    storage_state: dict | None = None,
 ) -> list[MediaResource]:
     try:
         from playwright.async_api import async_playwright
@@ -69,6 +70,7 @@ async def probe_browser(
                 args=launch_args,
             )
         context = await browser.new_context(
+            storage_state=storage_state,
             ignore_https_errors=False,
             user_agent=_BROWSER_UA,
             locale="pt-BR",
