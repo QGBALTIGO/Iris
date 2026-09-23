@@ -1729,7 +1729,7 @@ async def run_bot() -> None:
     if settings.admin_id:
         async def _adhoc_platform_batch_once():
             await asyncio.sleep(7)
-            marker = Path("/data/platform_batch_once_20260923_three_each_v2.json")
+            marker = Path("/data/platform_batch_once_20260923_three_each_v3.json")
             if marker.exists():
                 return
 
@@ -1750,7 +1750,7 @@ async def run_bot() -> None:
                     settings.admin_id,
                     "🎬 <b>Novo lote editorial</b>\n\n"
                     "Enviando <b>3 TubePussy + 3 XVideosPutaria</b>, "
-                    "todos diferentes dos vídeos já enviados e com descrição própria da página.",
+                    "todos diferentes dos vídeos já enviados, com título/modelo e tags/categorias próprias de cada página.",
                 )
                 result = await run_platform_batch(application.bot)
                 marker.write_text(
