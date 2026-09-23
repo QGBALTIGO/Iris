@@ -93,6 +93,14 @@ async def probe_browser(
                     return
             ctype = response.headers.get("content-type")
             kind = classify_resource(response.url, ctype)
+            lower_url = response.url.lower()
+            path_name = lower_url.split("?", 1)[0].rsplit("/", 1)[-1]
+            disguised_hls = (
+                "/hls/" in lower_url
+                and path_name in {"master.txt", "playlist.txt", "index.txt", "video.txt"}
+            )
+            if kind == ResourceType.OTHER and disguised_hls:
+                kind = ResourceType.PLAYLIST
             if kind == ResourceType.OTHER:
                 return
             path_lower = Path(response.url.split("?", 1)[0]).suffix.lower()
@@ -144,6 +152,7 @@ async def probe_browser(
             async def nudge_players():
                 selectors = [
                     "video",
+                    ".player_select_item",
                     "button[aria-label*='play' i]",
                     ".vjs-big-play-button",
                     ".plyr__control--overlaid",
