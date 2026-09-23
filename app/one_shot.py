@@ -7,6 +7,7 @@ from pathlib import Path
 
 from app.analyzer import Analyzer
 from app.delivery import DeliveryManager
+from app.editorial import format_video_caption
 from app.settings import settings
 from app.video_candidates import download_first_valid_video
 
@@ -51,7 +52,10 @@ async def run_one_shot(bot) -> dict:
         or result.title
         or Path(path).stem
     )
-    caption = f"🎬 {str(title)[:220]}"
+    caption = format_video_caption(
+        str(title),
+        resource.metadata.get("editorial"),
+    )
 
     try:
         await delivery.send_path_to_chat(
