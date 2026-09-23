@@ -20,12 +20,12 @@ def test_platform_caption_uses_metadata_from_each_video():
         },
     )
 
-    assert "#Pessoa_Um" in first
+    assert "🚫 Pessoa Um" in first
     assert "#Categoria_A" in first
     assert "#Tag_Um" in first
     assert "#Tag_Dois" in first
 
-    assert "#Pessoa_Dois" in second
+    assert "🚫 Pessoa Dois" in second
     assert "#Categoria_B" in second
     assert "#Tag_Três" in second
     assert first != second
