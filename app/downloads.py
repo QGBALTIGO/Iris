@@ -78,8 +78,11 @@ class DownloadEngine:
             raise DownloadRejected("Conteúdo protegido por DRM não é baixado pelo Iris")
         engine = self.choose_engine(resource)
         target = self.config.downloads_dir / (filename or safe_filename(resource))
-        if resource.type == ResourceType.PLAYLIST and target.suffix.lower() != ".mp4":
-            target = target.with_suffix(".mp4")
+        preferred_container = str(resource.metadata.get("container") or "mp4").lower()
+        if resource.type == ResourceType.PLAYLIST:
+            wanted_ext = ".mkv" if preferred_container == "mkv" else ".mp4"
+            if target.suffix.lower() != wanted_ext:
+                target = target.with_suffix(wanted_ext)
         target.parent.mkdir(parents=True, exist_ok=True)
 
         if engine == "aria2":
@@ -187,12 +190,16 @@ class DownloadEngine:
 
     async def _stream_tool(self, resource: MediaResource, target: Path, engine: str, progress=None) -> Path:
         if engine == "n_m3u8dl-re":
+            preferred_height = resource.metadata.get("preferred_height")
+            preferred_audio = resource.metadata.get("preferred_audio")
+            preferred_subtitle = resource.metadata.get("preferred_subtitle")
+            preferred_container = str(resource.metadata.get("container") or "mp4").lower()
+
             cmd = [
                 "N_m3u8DL-RE",
                 resource.url,
                 "--save-dir", str(target.parent),
                 "--save-name", target.stem,
-                "--auto-select",
                 "--thread-count", "16",
                 "--download-retry-count", "5",
                 "--http-request-timeout", "30",
@@ -201,21 +208,60 @@ class DownloadEngine:
                 "--no-log",
                 "--disable-update-check",
                 "-mt",
-                "-M", "format=mp4",
             ]
+
+            if preferred_height or preferred_audio or preferred_subtitle:
+                if preferred_height:
+                    cmd.extend([
+                        "-sv",
+                        f'res=".*x{int(preferred_height)}":for=best',
+                    ])
+                else:
+                    cmd.extend(["-sv", "best"])
+
+                if preferred_audio:
+                    cmd.extend([
+                        "-sa",
+                        f'lang="{preferred_audio}":for=best',
+                    ])
+                else:
+                    cmd.extend(["-sa", "best"])
+
+                if preferred_subtitle:
+                    cmd.extend([
+                        "-ss",
+                        f'lang="{preferred_subtitle}":for=all',
+                    ])
+            else:
+                cmd.append("--auto-select")
+
+            if preferred_container == "mkv" and shutil.which("mkvmerge"):
+                cmd.extend(["-M", "format=mkv:muxer=mkvmerge"])
+            else:
+                cmd.extend(["-M", "format=mp4"])
+
             for key, value in _replay_headers(resource.headers).items():
                 cmd.extend(["--header", f"{key}: {value}"])
         elif engine == "yt-dlp":
+            preferred_height = resource.metadata.get("preferred_height")
+            preferred_container = str(resource.metadata.get("container") or "mp4").lower()
             cmd = [
                 "yt-dlp",
                 "--no-part",
                 "--no-playlist",
                 "--newline",
                 "--concurrent-fragments", "12",
-                "--merge-output-format", "mp4",
-                "--remux-video", "mp4",
-                "-o", str(target),
             ]
+            if preferred_height:
+                cmd.extend([
+                    "-f",
+                    f"bv*[height<={int(preferred_height)}]+ba/b[height<={int(preferred_height)}]",
+                ])
+            if preferred_container == "mkv":
+                cmd.extend(["--merge-output-format", "mkv", "--remux-video", "mkv"])
+            else:
+                cmd.extend(["--merge-output-format", "mp4", "--remux-video", "mp4"])
+            cmd.extend(["-o", str(target)])
             for key, value in _replay_headers(resource.headers).items():
                 cmd.extend(["--add-header", f"{key}:{value}"])
             cmd.append(resource.url)
