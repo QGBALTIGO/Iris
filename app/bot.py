@@ -1602,6 +1602,26 @@ async def run_bot() -> None:
 
     if (
         channel_ready
+        and settings.repair_channel_captions
+        and settings.delivery_channel_invite
+    ):
+        try:
+            repaired = await userbot.repair_delivery_channel_captions(
+                settings.delivery_channel_invite,
+                limit=1000,
+            )
+            print(
+                f"IRIS_CHANNEL_CAPTION_REPAIR scanned={repaired['scanned']} edited={repaired['edited']}",
+                flush=True,
+            )
+        except Exception as exc:
+            print(
+                f"IRIS_CHANNEL_CAPTION_REPAIR_ERROR {type(exc).__name__}: {exc}",
+                flush=True,
+            )
+
+    if (
+        channel_ready
         and settings.backfill_channel_history
         and settings.delivery_channel_invite
     ):
