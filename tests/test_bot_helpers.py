@@ -85,13 +85,22 @@ def test_video_bucket_prioritizes_direct_mp4_over_embed_and_playlist():
     assert resources[0].url == "https://cdn.example/movie.mp4"
 
 
-def test_delivery_caption_is_plain_text():
+def test_delivery_caption_uses_editorial_block():
     resource = MediaResource(
         url="https://cdn.example/video.mp4",
         type=ResourceType.VIDEO,
-        title="Irmãs taradas acordando o meio irmão com sexo – Family Therapy Legendado",
+        title="Título do vídeo",
+        metadata={
+            "editorial": {
+                "person": "Ruiva Isabell",
+                "categories": ["Pornô Longo", "Famosas", "Lésbicas"],
+                "tags": ["Boquetes", "Anal", "Gostosas"],
+            }
+        },
     )
     caption = delivery_caption(resource, as_video=True)
-    assert caption == "🎬 Irmãs taradas acordando o meio irmão com sexo – Family Therapy Legendado"
-    assert "<b>" not in caption
+    assert caption.startswith("<b>🚫 #Ruiva_Isabell</b>")
+    assert "\n\n<blockquote expandable>" in caption
+    assert "#Pornô_Longo / #Famosas / #Lésbicas / #Boquetes / #Anal / #Gostosas" in caption
+    assert "🎬 Título do vídeo" not in caption
     assert "IRIS" not in caption
