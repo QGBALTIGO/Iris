@@ -99,7 +99,7 @@ async def probe_browser(
                 "/hls/" in lower_url
                 and path_name in {"master.txt", "playlist.txt", "index.txt", "video.txt"}
             )
-            if kind == ResourceType.OTHER and disguised_hls:
+            if disguised_hls:
                 kind = ResourceType.PLAYLIST
             if kind == ResourceType.OTHER:
                 return
@@ -279,8 +279,7 @@ async def probe_browser(
                     lower_candidate = candidate.lower()
                     path_name = lower_candidate.split("?", 1)[0].rsplit("/", 1)[-1]
                     if (
-                        kind == ResourceType.OTHER
-                        and "/hls/" in lower_candidate
+                        "/hls/" in lower_candidate
                         and path_name in {"master.txt", "playlist.txt", "index.txt", "video.txt"}
                     ):
                         kind = ResourceType.PLAYLIST
