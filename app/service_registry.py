@@ -33,7 +33,7 @@ _PROFILES = (
     ServiceProfile(
         key="pobreflix",
         label="Pobreflix",
-        hosts=("pobreflix",),
+        hosts=("pobrenow.com", "pobreflix"),
         strategies=("html", "browser", "hls", "yt-dlp"),
         browser_first=True,
     ),
