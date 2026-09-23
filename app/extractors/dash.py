@@ -4,6 +4,7 @@ import xml.etree.ElementTree as ET
 from urllib.parse import urljoin
 
 from app.models import MediaVariant
+from app.protection import detect_dash_protection
 
 
 def inspect_mpd(text: str, base_url: str) -> tuple[list[MediaVariant], bool]:
@@ -12,7 +13,8 @@ def inspect_mpd(text: str, base_url: str) -> tuple[list[MediaVariant], bool]:
     except ET.ParseError:
         return [], False
 
-    drm = any(elem.tag.endswith("ContentProtection") for elem in root.iter())
+    protection = detect_dash_protection(text)
+    drm = protection.drm
     variants: list[MediaVariant] = []
 
     for representation in (e for e in root.iter() if e.tag.endswith("Representation")):
