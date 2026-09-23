@@ -8,6 +8,7 @@ import httpx
 
 from app.content import annotate_content_roles
 from app.dedup import deduplicate
+from app.editorial import extract_editorial_metadata
 from app.extractors.browser import probe_browser
 from app.extractors.dash import inspect_mpd
 from app.extractors.hls import inspect_hls
@@ -46,6 +47,7 @@ class Analyzer:
         resources: list[MediaResource] = []
         warnings: list[str] = []
         page = None
+        page_editorial: dict | None = None
         blocked_status: int | None = None
 
         try:
@@ -79,6 +81,7 @@ class Analyzer:
             if "text/html" in ctype or page.body.lstrip().startswith((b"<!DOCTYPE html", b"<html", b"<HTML")):
                 html = page.body.decode(_charset(ctype), errors="replace")
                 title, resources = extract_html_resources(html, page.url)
+                page_editorial = extract_editorial_metadata(html, page.url).as_dict()
             else:
                 from app.classifier import classify_resource
                 resources.append(
@@ -115,6 +118,8 @@ class Analyzer:
         resources = [r for r in deduplicate(resources) if not r.metadata.get("navigation_only")]
         service_profile = detect_service(final_url)
         for resource in resources:
+            if page_editorial and not resource.metadata.get("editorial"):
+                resource.metadata["editorial"] = page_editorial
             resource.metadata.setdefault("service_key", service_profile.key)
             resource.metadata.setdefault("service_label", service_profile.label)
             resource.metadata.setdefault("strategies", list(service_profile.strategies))
