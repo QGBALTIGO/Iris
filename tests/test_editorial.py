@@ -114,4 +114,4 @@ def test_tubepussy_shorts_taxonomy_is_extracted_from_short_links():
     assert "#Big_Boobs" in caption
     assert "#Amateur_Porn" in caption
     assert "#Young" in caption
-    assert "#Amateur" not in caption
+    assert " / #Amateur / " not in caption
