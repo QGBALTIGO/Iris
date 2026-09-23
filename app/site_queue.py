@@ -71,6 +71,8 @@ class SiteQueueManager:
                     media_url TEXT,
                     media_source TEXT,
                     sent_message_id INTEGER,
+                    channel_message_id INTEGER,
+                    channel_sent_at REAL,
                     last_error TEXT,
                     created_at REAL NOT NULL,
                     updated_at REAL NOT NULL,
@@ -97,6 +99,15 @@ class SiteQueueManager:
             }
             if "last_recovery_nonce" not in columns:
                 db.execute("ALTER TABLE queue_state ADD COLUMN last_recovery_nonce TEXT")
+
+            item_columns = {
+                row["name"]
+                for row in db.execute("PRAGMA table_info(queue_items)").fetchall()
+            }
+            if "channel_message_id" not in item_columns:
+                db.execute("ALTER TABLE queue_items ADD COLUMN channel_message_id INTEGER")
+            if "channel_sent_at" not in item_columns:
+                db.execute("ALTER TABLE queue_items ADD COLUMN channel_sent_at REAL")
             db.execute(
                 """
                 INSERT OR IGNORE INTO queue_state(site, updated_at)
@@ -524,6 +535,8 @@ class SiteQueueManager:
             "last_error",
             "sent_message_id",
             "sent_at",
+            "channel_message_id",
+            "channel_sent_at",
         }
         values = {k: v for k, v in fields.items() if k in allowed}
         values["status"] = status
@@ -565,6 +578,27 @@ class SiteQueueManager:
         print(
             f"IRIS_QUEUE_SENT item={item_id} message={message_id}",
             flush=True,
+        )
+
+    def channel_backfill_items(self) -> list[dict[str, object]]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                SELECT id, url, title, media_url, media_source, sent_at
+                FROM queue_items
+                WHERE site=? AND status='sent' AND channel_sent_at IS NULL
+                ORDER BY sent_at ASC, id ASC
+                """,
+                (_SITE,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def mark_channel_sent(self, item_id: int, message_id: int | None) -> None:
+        self._update_item(
+            item_id,
+            "sent",
+            channel_message_id=message_id,
+            channel_sent_at=time.time(),
         )
 
     async def wait_delivery(self, item_id: int, timeout: float = 180.0) -> str:
@@ -684,7 +718,7 @@ class SiteQueueManager:
             last_error=None,
         )
 
-        caption = f"🎬 <b>{html_lib.escape(title[:220])}</b>\n\n✨ <i>IRIS</i>"
+        caption = f"🎬 <b>{html_lib.escape(title[:220])}</b>"
         # For this site's large CDN videos, Telegram external-URL fetches
         # regularly time out. The catalogue queue intentionally exercises the
         # full production path: web download -> native MTProto video upload.
@@ -742,7 +776,7 @@ class SiteQueueManager:
                     if rejected else None
                 ),
             )
-            await self.delivery.send_path_to_chat(
+            receipt = await self.delivery.send_path_to_chat(
                 bot,
                 target_chat_id,
                 path,
@@ -750,7 +784,13 @@ class SiteQueueManager:
                 queue_item_id=item.id,
                 as_video=True,
             )
-            await self.wait_delivery(item.id, timeout=300)
+            if receipt.get("mode") == "channel":
+                self.mark_channel_sent(
+                    item.id,
+                    int(receipt["message_id"]) if receipt.get("message_id") is not None else None,
+                )
+            else:
+                await self.wait_delivery(item.id, timeout=300)
         finally:
             if path and path.exists():
                 path.unlink(missing_ok=True)
