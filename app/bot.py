@@ -477,6 +477,30 @@ async def run_bot() -> None:
                 f"⚠️ <b>Diagnóstico falhou</b>\n\n<code>{_safe(str(exc), 220)}</code>"
             )
 
+    async def run_tests_isolated(chat_id: int):
+        queue_state = site_queue.status()
+        should_resume = bool(queue_state.get("running")) and not bool(queue_state.get("paused"))
+        if should_resume:
+            site_queue.pause()
+            if site_queue.task and not site_queue.task.done():
+                site_queue.task.cancel()
+                try:
+                    await site_queue.task
+                except asyncio.CancelledError:
+                    pass
+        try:
+            return await run_admin_test_suite(application.bot, chat_id)
+        finally:
+            if should_resume:
+                try:
+                    await site_queue.resume(application.bot, chat_id)
+                    await application.bot.send_message(
+                        chat_id,
+                        "♻️ <b>Fila persistente retomada</b> após a bateria de testes.",
+                    )
+                except Exception as exc:
+                    print(f"IRIS_QUEUE_RESUME_AFTER_TESTS_ERROR {type(exc).__name__}: {exc}", flush=True)
+
     async def admin_tests(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not _is_admin(update.effective_user.id if update.effective_user else None):
             return
@@ -486,7 +510,7 @@ async def run_bot() -> None:
             "Os resultados serão enviados aqui durante a execução."
         )
         asyncio.create_task(
-            run_admin_test_suite(application.bot, update.effective_chat.id),
+            run_tests_isolated(update.effective_chat.id),
             name="iris-admin-full-tests",
         )
 
@@ -1362,7 +1386,7 @@ async def run_bot() -> None:
         async def _admin_tests_once():
             await asyncio.sleep(6)
             try:
-                await run_admin_test_suite(application.bot, settings.admin_id)
+                await run_tests_isolated(settings.admin_id)
             except Exception as exc:
                 print(f"IRIS_ADMIN_TESTS_ERROR {type(exc).__name__}: {exc}", flush=True)
                 try:
