@@ -8,8 +8,6 @@ Iris é um analisador de páginas e gerenciador de mídia para Telegram/API. Ele
 - análise profunda paralela com Playwright + yt-dlp;
 - network sniffing para mídia carregada por JavaScript;
 - HLS/M3U8 e DASH/MPD com variantes de qualidade;
-- identificação de plataformas como Crunchyroll, Netflix, Prime Video, Disney+, Max, Paramount+, Apple TV+ e Globoplay;
-- detecção de Widevine, PlayReady, FairPlay, ClearKey, AES-128 e proteção CENC/DRM desconhecida;
 - detecção de DRM e conteúdo renderizado/obfuscado;
 - separação entre páginas de capítulo, imagens úteis e assets de interface;
 - downloads paralelos com aria2/HTTPX e fallback automático;
@@ -84,7 +82,7 @@ O Iris escolhe automaticamente:
 - sites suportados pelo yt-dlp: yt-dlp;
 - páginas dinâmicas: Playwright.
 
-O projeto identifica a plataforma e o sistema de proteção quando isso aparece nos manifestos, mas não tenta obter chaves, contornar DRM ou remover controles de acesso. Streams protegidos permanecem visíveis no diagnóstico e indisponíveis para download.
+O projeto não tenta contornar DRM ou controles de acesso.
 
 ## Testes
 
