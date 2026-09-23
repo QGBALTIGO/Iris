@@ -17,7 +17,7 @@ def test_tubepussy_editorial_metadata():
     assert meta.categories == ["Novinha"]
     assert meta.tags == ["ruiva"]
     block = format_editorial_block(meta)
-    assert "<b>🚫 #Ruiva_Isabell</b>" in block
+    assert "<b>🚫 Ruiva Isabell</b>" in block
     assert "#Novinha / #Ruiva" in block
     assert "<blockquote expandable>" in block
 
@@ -46,7 +46,7 @@ def test_xvideosputaria_editorial_metadata():
     assert meta.categories[:2] == ["Boquetes", "Bucetas"]
     assert "bunda grande" in meta.tags
     block = format_editorial_block(meta)
-    assert "<b>🚫 #Mini_Gabys</b>" in block
+    assert "<b>🚫 Mini Gabys</b>" in block
     assert "#Pornô_Longo" in block
     assert "#Bunda_Grande" in block
     assert "#Sexo_Ao_Ar_Livre" in block
@@ -74,7 +74,7 @@ def test_video_caption_keeps_editorial_block():
             "tags": ["bunda grande"],
         },
     )
-    assert caption.startswith("<b>🚫 #Mini_Gabys</b>")
+    assert caption.startswith("<b>🚫 Mini Gabys</b>")
     assert "🎬 Título do vídeo" not in caption
     assert "<blockquote expandable>" in caption
     assert "\n\n<blockquote expandable>" in caption
@@ -114,7 +114,7 @@ def test_tubepussy_shorts_taxonomy_is_extracted_from_short_links():
     ]
     caption = format_video_caption(meta.title, meta)
     assert caption.startswith(
-        "<b>🚫 #Mostrando_Os_Peitos_Na_Frente_Do_Espelho</b>"
+        "<b>🚫 Mostrando os peitos na frente do espelho</b>"
     )
     assert "#Shorts_Porn" in caption
     assert "#Big_Boobs" in caption
@@ -167,7 +167,7 @@ def test_xvideosputaria_current_post_taxonomies_ignore_global_menu():
     assert "Famosas" not in meta.categories
     assert "Lésbicas" not in meta.categories
     caption = format_video_caption(meta.title, meta)
-    assert caption.startswith("<b>🚫 #Mini_Gabys</b>")
+    assert caption.startswith("<b>🚫 Mini Gabys</b>")
     assert "#Boquetes" in caption
     assert "#Bucetas" in caption
     assert "#Bundas" in caption
