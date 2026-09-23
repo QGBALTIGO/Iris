@@ -144,36 +144,52 @@ def extract_editorial_metadata(page_html: str, page_url: str) -> EditorialMetada
                 tags.extend(_texts(current_short_links))
 
     elif "xvideosputaria.com" in host:
-        # WordPress-style taxonomies plus class/id based fallbacks.
-        tag_links = list(soup.select('a[href*="/tag/"]'))
-        category_links = list(soup.select('a[href*="/category/"]'))
-        person_links = list(soup.select(
-            'a[href*="/pornstar/"], a[href*="/pornstars/"], '
-            'a[href*="/modelo/"], a[href*="/model/"], '
-            'a[href*="/atriz/"], a[href*="/ator/"], a[href*="/performer/"]'
-        ))
+        # Current XVideosPutaria article pages expose the useful metadata in
+        # .post-tags. Categories use /videos/, models use /modelo/, and free
+        # tags use /xxx/. Restricting extraction to that article block avoids
+        # mixing in the global menu categories.
+        post_tag_blocks = soup.select(".post-tags")
+        scoped_links = [
+            a
+            for block in post_tag_blocks
+            for a in block.select("a[href]")
+        ]
 
-        # The site also renders three navigation groups (star/folder/tag).
-        for container in soup.select('[class*="star"], [class*="model"], [class*="pornstar"], [class*="performer"], [id*="star"], [id*="model"]'):
-            person_links.extend(container.select("a"))
-        for container in soup.select('[class*="categor"], [id*="categor"]'):
-            category_links.extend(container.select("a"))
-        for container in soup.select('[class*="tag"], [id*="tag"]'):
-            tag_links.extend(container.select("a"))
+        explicit_person_links = [
+            a for a in scoped_links
+            if any(token in (a.get("href") or "") for token in (
+                "/pornstar/", "/pornstars/", "/modelo/", "/model/",
+                "/atriz/", "/ator/", "/performer/",
+            ))
+        ]
+        category_links = [
+            a for a in scoped_links
+            if "/videos/" in (a.get("href") or "")
+        ]
+        tag_links = [
+            a for a in scoped_links
+            if "/xxx/" in (a.get("href") or "")
+        ]
 
-        people.extend(_texts(person_links))
+        # Compatibility fallbacks for older layouts.
+        if not explicit_person_links:
+            explicit_person_links = list(soup.select(
+                'a[href*="/pornstar/"], a[href*="/pornstars/"], '
+                'a[href*="/modelo/"], a[href*="/model/"], '
+                'a[href*="/atriz/"], a[href*="/ator/"], a[href*="/performer/"]'
+            ))
+        if not category_links:
+            category_links = list(
+                soup.select('.post-tags a[href*="/category/"], .post-tags a[href*="/videos/"]')
+            )
+        if not tag_links:
+            tag_links = list(
+                soup.select('.post-tags a[href*="/tag/"], .post-tags a[href*="/xxx/"]')
+            )
+
+        people.extend(_texts(explicit_person_links))
         categories.extend(_texts(category_links))
         tags.extend(_texts(tag_links))
-
-        # Avoid accidentally treating the WordPress title/tag navigation itself
-        # as a person when the same link appears in more than one taxonomy.
-        category_keys = {v.casefold() for v in categories}
-        tag_keys = {v.casefold().lstrip("#") for v in tags}
-        people = [
-            p for p in people
-            if p.casefold() not in category_keys
-            and p.casefold().lstrip("#") not in tag_keys
-        ]
 
     else:
         categories.extend(_texts(soup.select('a[rel~="category"], a[href*="/category/"]')))
