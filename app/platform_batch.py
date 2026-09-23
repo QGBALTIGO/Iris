@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import html
 import json
 import re
 from pathlib import Path
@@ -9,7 +10,7 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 
 from app.analyzer import Analyzer
 from app.delivery import DeliveryManager
-from app.editorial import extract_editorial_metadata, format_video_caption
+from app.editorial import extract_editorial_metadata, hashtag
 from app.settings import settings
 from app.video_candidates import download_first_valid_video
 
@@ -17,6 +18,42 @@ _SEEDS = {
     "tubepussy": "https://tubepussy.org/ruiva-isabel-dando-a-bucetinha-e-levando-na-cara/#forward",
     "xvideosputaria": "https://xvideosputaria.com/anao-gabriela-gadotti-mini-gabys-boquetando-com-leite-na-boca/#forward",
 }
+
+_FIXED_TAGS = [
+    "#Pornô_Longo",
+    "#Famosas",
+    "#Lésbicas",
+    "#Boquetes",
+    "#Anal",
+    "#Gostosas",
+    "#Novinhas",
+    "#Coroas",
+    "#Bucetas",
+    "#Peitudas",
+    "#Mini_Gabys",
+    "#Bundas",
+    "#Anã",
+    "#Chupando_Buceta",
+    "#Gozada_Na_Cara",
+    "#Mamando_Rola",
+    "#Pack",
+    "#Peitos_Naturais",
+]
+
+_FALLBACK_PERSON = {
+    "tubepussy": "Ruiva Isabell",
+    "xvideosputaria": "Mini Gabys",
+}
+
+
+def _fixed_test_caption(platform: str, meta: dict | None) -> str:
+    person = str((meta or {}).get("person") or _FALLBACK_PERSON.get(platform) or "Vídeo")
+    person_tag = hashtag(person) or "#Vídeo"
+    body = "🔎 Tags: " + " / ".join(_FIXED_TAGS)
+    return (
+        f"<b>🚫 {html.escape(person_tag)}</b>\n\n"
+        f"<blockquote expandable>{html.escape(body)}</blockquote>"
+    )
 
 _SKIP_PREFIXES = (
     "/tag/",
@@ -58,6 +95,20 @@ def _looks_like_post(url: str, host: str) -> bool:
     lower = path.lower()
     if host == "tubepussy.org" and re.match(r"^/[a-z]{2}/", lower):
         return False
+    if host == "xvideosputaria.com":
+        segments = [segment for segment in lower.split("/") if segment]
+        if len(segments) != 1:
+            return False
+        if segments[0] in {
+            "porno-novo-hdd",
+            "mais-populares",
+            "login",
+            "contato",
+            "dmca",
+            "privacy-policy",
+            "politica-de-privacidade",
+        }:
+            return False
     if lower.startswith(_SKIP_PREFIXES):
         return False
     if any(lower.endswith(ext) for ext in (
@@ -206,18 +257,28 @@ async def run_platform_batch(bot) -> dict[str, object]:
     delivery = DeliveryManager()
     report: dict[str, object] = {}
 
-    correction_mode = settings.platform_batch_nonce == "editorial-six-v3-correction"
+    tube_correction = settings.platform_batch_nonce == "editorial-six-v3-correction"
+    xvp_correction = settings.platform_batch_nonce == "editorial-xvp-v4-correction"
 
     for platform, seed in _SEEDS.items():
-        candidates = await _discover_related(seed, limit=40)
+        candidates = await _discover_related(seed, limit=60)
         sent = 0
         attempted = 0
         failures: list[str] = []
         rows: list[dict] = []
         seen_media: set[str] = set()
         seen_fingerprints: set[str] = set()
-        target = 2 if correction_mode and platform == "tubepussy" else 3
-        skip_seed = correction_mode and platform == "tubepussy"
+
+        if xvp_correction:
+            target = 0 if platform == "tubepussy" else 2
+            skip_seed = platform == "xvideosputaria"
+            if platform == "xvideosputaria":
+                seen_media.add(
+                    "vazounudes.net/hls/db4bbebc-710b-445d-8b4b-2ae2cc081d82/480p/video.m3u8"
+                )
+        else:
+            target = 2 if tube_correction and platform == "tubepussy" else 3
+            skip_seed = tube_correction and platform == "tubepussy"
 
         for page_url in candidates:
             if sent >= target:
@@ -257,7 +318,7 @@ async def run_platform_batch(bot) -> dict[str, object]:
                     or result.title
                     or Path(path).stem
                 )
-                caption = format_video_caption(title, meta)
+                caption = _fixed_test_caption(platform, meta)
 
                 receipt = await delivery.send_path_to_chat(
                     bot,
