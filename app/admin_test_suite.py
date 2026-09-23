@@ -115,6 +115,15 @@ async def _analyze_site(name: str, url: str, *, download: bool = False, expect_d
         path.unlink(missing_ok=True)
 
 
+async def _analyze_reader(url: str) -> str:
+    result = await Analyzer().analyze(url, deep=True)
+    pages = [r for r in result.resources if r.metadata.get("role") == "chapter_page"]
+    if not pages:
+        raise AssertionError(f"nenhuma página detectada • avisos={result.warnings[:3]}")
+    protected = sum(r.metadata.get("raw_downloadable") is False for r in pages)
+    return f"páginas={len(pages)} • exportação protegida={protected}"
+
+
 async def _public_download(name: str, resource: MediaResource, min_bytes: int = 1024) -> str:
     path = await DownloadEngine().download(resource)
     try:
@@ -289,12 +298,6 @@ async def run_admin_test_suite(bot, admin_id: int) -> list[Check]:
                 False,
                 True,
             ),
-            (
-                "MANGA Plus",
-                "https://mangaplus.shueisha.co.jp/viewer/1009176",
-                False,
-                False,
-            ),
         ]
 
         for label, url, do_download, expect_drm in real_sites:
@@ -303,6 +306,11 @@ async def run_admin_test_suite(bot, admin_id: int) -> list[Check]:
                 lambda url=url, do_download=do_download, expect_drm=expect_drm, label=label:
                     _analyze_site(label, url, download=do_download, expect_drm=expect_drm),
             )
+
+        await add(
+            "MANGA Plus",
+            lambda: _analyze_reader("https://mangaplus.shueisha.co.jp/viewer/1009176"),
+        )
 
         passed = sum(c.status == "PASS" for c in checks)
         failed = len(checks) - passed
