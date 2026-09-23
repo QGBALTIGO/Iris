@@ -76,7 +76,7 @@ class ChannelBackfill:
             )
             db.commit()
 
-    async def _send_url(self, url: str, fallback_title: str | None = None) -> tuple[str, int | None]:
+    async def _send_url(self, url: str, fallback_title: str | None = None, bot=None) -> tuple[str, int | None]:
         result = await self.analyzer.analyze(url, deep=True)
         resource, path, _, info, rejected = await download_first_valid_video(result.resources)
         title = (
@@ -88,10 +88,16 @@ class ChannelBackfill:
         )
         caption = f"🎬 <b>{html.escape(str(title)[:220])}</b>"
         try:
-            sent = await self.delivery.send_path_to_delivery_channel(
+            receipt = await self.delivery.send_path_to_delivery_channel(
                 path,
+                bot=bot,
                 caption=caption,
                 as_video=True,
+            )
+            message_id = (
+                int(receipt["message_id"])
+                if receipt.get("message_id") is not None
+                else None
             )
             print(
                 "IRIS_CHANNEL_BACKFILL_SENT "
@@ -99,7 +105,8 @@ class ChannelBackfill:
                     {
                         "url": url,
                         "title": title,
-                        "message_id": getattr(sent, "id", None),
+                        "mode": receipt.get("mode"),
+                        "message_id": message_id,
                         "duration": info.duration,
                         "width": info.width,
                         "height": info.height,
@@ -109,7 +116,7 @@ class ChannelBackfill:
                 ),
                 flush=True,
             )
-            return str(title), getattr(sent, "id", None)
+            return str(title), message_id
         finally:
             path.unlink(missing_ok=True)
 
@@ -130,7 +137,11 @@ class ChannelBackfill:
             item_id = int(row["id"])
             url = str(row["url"])
             try:
-                title, message_id = await self._send_url(url, str(row.get("title") or "") or None)
+                title, message_id = await self._send_url(
+                    url,
+                    str(row.get("title") or "") or None,
+                    bot=bot,
+                )
                 site_queue.mark_channel_sent(item_id, message_id)
                 sent += 1
             except Exception as exc:
@@ -147,7 +158,7 @@ class ChannelBackfill:
                 continue
             try:
                 self._manual_mark(url, "processing")
-                title, message_id = await self._send_url(url)
+                title, message_id = await self._send_url(url, bot=bot)
                 self._manual_mark(url, "sent", title=title, message_id=message_id)
                 sent += 1
             except Exception as exc:
