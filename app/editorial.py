@@ -210,10 +210,12 @@ def format_editorial_block(meta: dict | EditorialMetadata | None, *, max_chars: 
 
 
 def format_video_caption(title: str | None, meta: dict | EditorialMetadata | None) -> str:
-    clean_title = _clean(title) or "Vídeo"
-    base = f"🎬 {html.escape(clean_title[:220])}"
+    # Editorial videos use only the person + expandable tag block. This keeps
+    # the Telegram post clean and matches the Baltigo posting pattern.
     block = format_editorial_block(meta)
-    if not block:
-        return base
-    caption = base + "\n\n" + block
-    return caption[:1000]
+    if block:
+        return block[:1000]
+
+    # Fallback only when the source exposes no useful editorial metadata.
+    clean_title = _clean(title) or "Vídeo"
+    return f"<b>🚫 {html.escape(hashtag(clean_title) or '#Vídeo')}</b>"[:1000]
