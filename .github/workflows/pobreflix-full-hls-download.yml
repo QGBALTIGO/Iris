@@ -1,5 +1,5 @@
 name: Pobreflix full HLS download
-# retry dynamic-player extraction
+# retry dynamic-player extraction v2
 
 on:
   push:
