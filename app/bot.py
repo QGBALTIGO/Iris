@@ -1572,20 +1572,20 @@ async def run_bot() -> None:
     channel_ready = True
     if settings.delivery_channel_only and settings.delivery_channel_invite:
         try:
-            channel_info = await delivery.delivery_channel_info()
+            channel_info = await delivery.delivery_channel_info(application.bot)
             print(
                 "IRIS_DELIVERY_CHANNEL "
                 + " ".join(f"{key}={value}" for key, value in (channel_info or {}).items()),
                 flush=True,
             )
-            if not channel_info or not channel_info.get("can_post"):
+            if not channel_info or not channel_info.get("can_deliver"):
                 channel_ready = False
                 site_queue.pause()
                 if settings.admin_id:
                     await application.bot.send_message(
                         settings.admin_id,
                         "⚠️ <b>Canal de entrega sem permissão</b>\n\n"
-                        "A Conta 06 conseguiu localizar o canal, mas não pode publicar nele. "
+                        "O canal foi localizado, mas nem a Conta 06 nem o bot têm permissão de postagem. "
                         "A fila foi pausada para não voltar a enviar vídeos no seu PV.",
                     )
         except Exception as exc:
