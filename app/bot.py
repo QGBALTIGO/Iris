@@ -157,6 +157,58 @@ def delivery_caption(resource: MediaResource | None, *, as_video: bool = False) 
     return "\n".join(lines)
 
 
+def manifest_tracks_text(result: AnalyzeResult) -> str:
+    manifests = [r for r in result.resources if r.type == ResourceType.PLAYLIST]
+    qualities = []
+    audio = []
+    subtitles = []
+    drm = []
+    for resource in manifests:
+        qualities.extend(v for v in resource.variants if v.label)
+        audio.extend(resource.metadata.get("audio_tracks") or [])
+        subtitles.extend(resource.metadata.get("subtitle_tracks") or [])
+        drm.extend(resource.metadata.get("drm_systems") or [])
+
+    lines = ["🎚️ <b>Faixas e qualidades</b>", ""]
+    if qualities:
+        seen = set()
+        labels = []
+        for variant in qualities:
+            key = (variant.label, variant.codecs, variant.bandwidth)
+            if key in seen:
+                continue
+            seen.add(key)
+            text = variant.label or "auto"
+            if variant.codecs:
+                text += f" • {variant.codecs}"
+            labels.append(text)
+        lines.append("📺 <b>Vídeo</b>")
+        lines.extend(f"• {_safe(item, 100)}" for item in labels[:12])
+        lines.append("")
+    if audio:
+        lines.append("🎵 <b>Áudio</b>")
+        for item in audio[:12]:
+            name = item.get("name") or item.get("language") or "faixa"
+            lang = item.get("language")
+            channels = item.get("channels")
+            suffix = " • ".join(str(x) for x in (lang, channels) if x)
+            lines.append(f"• {_safe(str(name), 70)}" + (f" — {_safe(suffix, 50)}" if suffix else ""))
+        lines.append("")
+    if subtitles:
+        lines.append("💬 <b>Legendas</b>")
+        for item in subtitles[:16]:
+            name = item.get("name") or item.get("language") or "legenda"
+            lang = item.get("language")
+            forced = " • forced" if item.get("forced") else ""
+            lines.append(f"• {_safe(str(name), 70)}" + (f" — {_safe(str(lang), 30)}" if lang else "") + forced)
+        lines.append("")
+    if drm:
+        lines.append(f"🔒 DRM: <b>{_safe(', '.join(sorted(set(map(str, drm)))), 100)}</b>")
+    if not qualities and not audio and not subtitles:
+        lines.append("Nenhuma faixa detalhada disponível neste manifesto.")
+    return "\n".join(lines)
+
+
 def queue_status_text() -> str:
     status = site_queue.status()
     counts = status.get("counts") or {}
@@ -305,6 +357,15 @@ async def run_bot() -> None:
                         callback_data=f"cat:{bucket}:{key}:0",
                     )
                 ])
+        has_tracks = any(
+            r.type == ResourceType.PLAYLIST
+            and (r.variants or r.metadata.get("audio_tracks") or r.metadata.get("subtitle_tracks"))
+            for r in result.resources
+        )
+        if has_tracks:
+            rows.append([
+                InlineKeyboardButton("🎚️ Faixas e qualidades", callback_data=f"tracks:{key}")
+            ])
         rows.append([
             InlineKeyboardButton("🔬 Reanalisar profundamente", callback_data=f"deep:{key}")
         ])
@@ -1076,6 +1137,20 @@ async def run_bot() -> None:
             result = _ANALYSES.get(key)
             if result:
                 await query.edit_message_text(_analysis_text(result), reply_markup=summary_markup(result, key))
+            return
+
+        if action == "tracks" and len(parts) >= 2:
+            key = parts[1]
+            result = _ANALYSES.get(key)
+            if not result:
+                await query.edit_message_text("⌛ <b>Análise expirada.</b>\n\nEnvie a URL novamente.")
+                return
+            await query.edit_message_text(
+                manifest_tracks_text(result),
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("↩️ Voltar", callback_data=f"home:x:{key}:0")]
+                ]),
+            )
             return
 
         if action == "deep" and len(parts) >= 2:
