@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 from fastapi import FastAPI, HTTPException
+import shutil
 
 from app.analyzer import Analyzer
 from app.jobs import JobStore
 from app.models import AnalyzeRequest, BatchDownloadRequest, DownloadJob
 from app.security import UnsafeUrlError
+from app.service_registry import list_services
+from app.settings import settings
+from app.userbot import userbot
 
 app = FastAPI(title="Iris", version="0.1.0", description="Universal page analyzer and download manager")
 analyzer = Analyzer()
@@ -60,3 +64,40 @@ async def cancel_job(job_id: str):
         raise HTTPException(status_code=404, detail="Job não encontrado")
     jobs.cancel(job_id)
     return job
+
+
+
+@app.get("/api/capabilities")
+async def capabilities():
+    services = [
+        {
+            "key": profile.key,
+            "label": profile.label,
+            "hosts": list(profile.hosts),
+            "strategies": list(profile.strategies),
+            "drm_expected": profile.drm_expected,
+            "browser_first": profile.browser_first,
+        }
+        for profile in list_services()
+    ]
+    return {
+        "service": "iris",
+        "browser": {
+            "enabled": settings.browser_enabled,
+            "gpu_disabled": settings.browser_disable_gpu,
+        },
+        "engines": {
+            "aria2": bool(shutil.which("aria2c")),
+            "yt_dlp": bool(shutil.which("yt-dlp")),
+            "n_m3u8dl_re": bool(shutil.which("N_m3u8DL-RE")),
+            "streamlink": bool(shutil.which("streamlink")),
+            "ffmpeg": bool(shutil.which("ffmpeg")),
+            "ffprobe": bool(shutil.which("ffprobe")),
+            "mkvmerge": bool(shutil.which("mkvmerge")),
+        },
+        "userbot": {
+            "configured": userbot.configured,
+            "authorized": await userbot.is_authorized() if userbot.configured else False,
+        },
+        "services": services,
+    }
