@@ -1,4 +1,4 @@
-from app.bot import deliverable_paths, needs_deep_analysis, progress_text, resources_for_bucket
+from app.bot import deliverable_paths, delivery_caption, needs_deep_analysis, progress_text, resources_for_bucket
 from app.models import AnalyzeResult, DownloadItemStatus, DownloadJob, JobState, MediaResource, ResourceType
 
 
@@ -83,3 +83,15 @@ def test_video_bucket_prioritizes_direct_mp4_over_embed_and_playlist():
     )
     resources = resources_for_bucket(result, "v")
     assert resources[0].url == "https://cdn.example/movie.mp4"
+
+
+def test_delivery_caption_is_plain_text():
+    resource = MediaResource(
+        url="https://cdn.example/video.mp4",
+        type=ResourceType.VIDEO,
+        title="Irmãs taradas acordando o meio irmão com sexo – Family Therapy Legendado",
+    )
+    caption = delivery_caption(resource, as_video=True)
+    assert caption == "🎬 Irmãs taradas acordando o meio irmão com sexo – Family Therapy Legendado"
+    assert "<b>" not in caption
+    assert "IRIS" not in caption
