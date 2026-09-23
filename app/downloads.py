@@ -243,12 +243,14 @@ class DownloadEngine:
                 "--stream-segment-attempts", "5",
                 "--stream-segment-threads", "8",
                 "--force",
-                "-o", str(target),
-                resource.url,
-                "best",
             ]
             for key, value in _replay_headers(resource.headers).items():
                 cmd.extend(["--http-header", f"{key}={value}"])
+            cmd.extend([
+                "-o", str(target),
+                resource.url,
+                "best",
+            ])
         else:
             raise DownloadRejected(f"Motor de stream desconhecido: {engine}")
         await _run(cmd, progress=progress)
