@@ -11,30 +11,35 @@ from telethon.network import MTProtoSender
 from telethon.tl.functions.upload import SaveBigFilePartRequest, SaveFilePartRequest
 from telethon.tl.types import InputFile, InputFileBig
 
+from app.settings import settings
+
 
 def connection_count(file_size: int) -> int:
+    # Telegram becomes noticeably less stable when a single process opens
+    # 12-16 parallel MTProto upload senders. Cap at 8 for 24/7 reliability.
     if file_size < 2 * 1024 * 1024:
         return 2
     if file_size < 8 * 1024 * 1024:
         return 4
     if file_size < 64 * 1024 * 1024:
-        return 8
-    if file_size < 128 * 1024 * 1024:
-        return 12
-    return 16
+        return 6
+    return 8
 
 
 async def _new_sender(client):
     dc = await client._get_dc(client.session.dc_id)
     sender = MTProtoSender(client.session.auth_key, loggers=client._log)
-    await sender.connect(
-        client._connection(
-            dc.ip_address,
-            dc.port,
-            dc.id,
-            loggers=client._log,
-            proxy=client._proxy,
-        )
+    await asyncio.wait_for(
+        sender.connect(
+            client._connection(
+                dc.ip_address,
+                dc.port,
+                dc.id,
+                loggers=client._log,
+                proxy=client._proxy,
+            )
+        ),
+        timeout=max(5.0, settings.mtproto_connect_timeout_seconds),
     )
     return sender
 
@@ -60,7 +65,10 @@ async def upload_path(client, path: Path, progress_callback=None, connection_ove
             request = SaveBigFilePartRequest(file_id, index, part_count, data)
         else:
             request = SaveFilePartRequest(file_id, index, data)
-        await client._call(sender, request)
+        await asyncio.wait_for(
+            client._call(sender, request),
+            timeout=max(5.0, settings.mtproto_part_timeout_seconds),
+        )
 
     try:
         with path.open("rb") as fh:
