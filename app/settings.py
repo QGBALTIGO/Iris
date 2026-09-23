@@ -55,6 +55,7 @@ class Settings:
     queue_recovery_nonce: str | None = os.getenv("IRIS_QUEUE_RECOVERY_NONCE")
     one_shot_url: str | None = os.getenv("IRIS_ONE_SHOT_URL")
     one_shot_nonce: str | None = os.getenv("IRIS_ONE_SHOT_NONCE")
+    editorial_preview: bool = _bool("IRIS_EDITORIAL_PREVIEW", False)
     delivery_channel_invite: str | None = os.getenv("IRIS_DELIVERY_CHANNEL_INVITE")
     delivery_channel_only: bool = _bool("IRIS_DELIVERY_CHANNEL_ONLY", False)
     backfill_channel_history: bool = _bool("IRIS_BACKFILL_CHANNEL_HISTORY", False)
