@@ -495,7 +495,7 @@ class SiteQueueManager:
     def _next_item(self) -> QueueItem | None:
         with self._connect() as db:
             # A broken/expired source must never monopolize the 24/7 worker.
-            # After four attempts it is preserved as failed and the queue moves on.
+            # After three attempts it is preserved as failed and the queue moves on.
             db.execute(
                 """
                 UPDATE queue_items
@@ -504,7 +504,7 @@ class SiteQueueManager:
                     updated_at=?
                 WHERE site=?
                   AND status IN ('retry_local','pending')
-                  AND attempts >= 4
+                  AND attempts >= 3
                 """,
                 (time.time(), _SITE),
             )
@@ -514,7 +514,7 @@ class SiteQueueManager:
                 SELECT id, url, title, status, attempts, published_at, last_error
                 FROM queue_items
                 WHERE site=? AND status IN ('retry_local','pending')
-                  AND attempts < 4
+                  AND attempts < 3
                 ORDER BY
                     CASE status WHEN 'retry_local' THEN 0 ELSE 1 END,
                     published_at DESC,
