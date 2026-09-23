@@ -172,6 +172,7 @@ async def _discover_related(seed: str, limit: int = 30) -> tuple[list[str], dict
     from playwright.async_api import async_playwright
 
     host = urlsplit(seed).netloc.lower().removeprefix("www.")
+    seed_path = urlsplit(seed).path.rstrip("/")
     launch_args: list[str] = []
     if settings.browser_disable_gpu:
         launch_args.extend([
@@ -183,7 +184,30 @@ async def _discover_related(seed: str, limit: int = 30) -> tuple[list[str], dict
         ])
 
     candidates: list[str] = [_canonical(seed)]
-    seen = set(candidates)
+    seen_posts = set(candidates)
+    visited_listings: set[str] = set()
+    listing_queue: list[str] = [seed]
+
+    def _listing_key(value: str) -> str:
+        parsed = urlsplit(value)
+        return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, parsed.query, ""))
+
+    def _is_pagination_link(value: str, text: str) -> bool:
+        parsed = urlsplit(value)
+        if parsed.netloc.lower().removeprefix("www.") != host:
+            return False
+        path = parsed.path.rstrip("/")
+        query = parsed.query.lower()
+        label = (text or "").strip().lower()
+        if path.startswith(seed_path + "/page/"):
+            return True
+        if path.startswith(seed_path + "/") and re.search(r"/\d+$", path):
+            return True
+        if path == seed_path and any(k in query for k in ("page=", "paged=", "p=")):
+            return True
+        return label in {"próximo", "proximo", "next", "›", "»"} and (
+            path.startswith(seed_path) or path == seed_path
+        )
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, args=launch_args)
@@ -198,33 +222,59 @@ async def _discover_related(seed: str, limit: int = 30) -> tuple[list[str], dict
         )
         page = await context.new_page()
 
-        async def collect(url: str) -> None:
+        pages_scanned = 0
+        max_listing_pages = max(1, min(8, (limit + 19) // 20 + 1))
+
+        while listing_queue and len(candidates) < limit and pages_scanned < max_listing_pages:
+            listing_url = listing_queue.pop(0)
+            listing_key = _listing_key(listing_url)
+            if listing_key in visited_listings:
+                continue
+            visited_listings.add(listing_key)
+            pages_scanned += 1
+
             try:
-                await page.goto(url, wait_until="domcontentloaded", timeout=18_000)
-                await page.wait_for_timeout(2_000)
-                hrefs = await page.eval_on_selector_all(
-                    "a[href]",
-                    "(els) => els.map(a => a.href).filter(Boolean)",
+                await page.goto(
+                    listing_url,
+                    wait_until="domcontentloaded",
+                    timeout=18_000,
                 )
-                for href in hrefs:
-                    value = _canonical(str(href))
-                    if value in seen or not _looks_like_post(value, host):
-                        continue
-                    seen.add(value)
+                await page.wait_for_timeout(1_500)
+                anchors = await page.eval_on_selector_all(
+                    "a[href]",
+                    """(els) => els.map(a => ({
+                        href: a.href,
+                        text: (a.textContent || '').trim()
+                    })).filter(x => x.href)""",
+                )
+            except Exception:
+                continue
+
+            queued_keys = {_listing_key(x) for x in listing_queue}
+            for anchor in anchors:
+                href = str(anchor.get("href") or "")
+                text = str(anchor.get("text") or "")
+                value = _canonical(href)
+                if value not in seen_posts and _looks_like_post(value, host):
+                    seen_posts.add(value)
                     candidates.append(value)
                     if len(candidates) >= limit:
                         break
-            except Exception:
-                return
-
-        await collect(seed)
-        if len(candidates) < 8:
-            await collect(f"https://{host}/")
+                elif _is_pagination_link(href, text):
+                    nav_key = _listing_key(href)
+                    if nav_key not in visited_listings and nav_key not in queued_keys:
+                        listing_queue.append(href)
+                        queued_keys.add(nav_key)
 
         storage_state = await context.storage_state()
         await context.close()
         await browser.close()
 
+    print(
+        f"IRIS_DISCOVERY_PAGES host={host} scanned={len(visited_listings)} "
+        f"candidates={len(candidates)}",
+        flush=True,
+    )
     return candidates[:limit], storage_state
 
 
