@@ -784,7 +784,7 @@ class SiteQueueManager:
                 queue_item_id=item.id,
                 as_video=True,
             )
-            if receipt.get("mode") == "channel":
+            if receipt.get("mode") == "channel-direct":
                 self.mark_channel_sent(
                     item.id,
                     int(receipt["message_id"]) if receipt.get("message_id") is not None else None,
