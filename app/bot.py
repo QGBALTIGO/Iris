@@ -1608,25 +1608,33 @@ async def run_bot() -> None:
                     "A fila foi pausada; nenhum vídeo será enviado no PV.",
                 )
 
-    if (
-        channel_ready
-        and settings.repair_channel_captions
-        and settings.delivery_channel_invite
-    ):
-        try:
-            repaired = await userbot.repair_delivery_channel_captions(
-                settings.delivery_channel_invite,
-                limit=1000,
-            )
-            print(
-                f"IRIS_CHANNEL_CAPTION_REPAIR scanned={repaired['scanned']} edited={repaired['edited']}",
-                flush=True,
-            )
-        except Exception as exc:
-            print(
-                f"IRIS_CHANNEL_CAPTION_REPAIR_ERROR {type(exc).__name__}: {exc}",
-                flush=True,
-            )
+    if settings.repair_channel_captions:
+        repair_targets = []
+        for invite in (
+            settings.delivery_channel_invite,
+            settings.popular_channel_invite,
+        ):
+            if invite and invite not in repair_targets:
+                repair_targets.append(invite)
+
+        for invite in repair_targets:
+            try:
+                repaired = await userbot.repair_delivery_channel_captions(
+                    invite,
+                    limit=1000,
+                )
+                print(
+                    "IRIS_CHANNEL_CAPTION_REPAIR "
+                    f"scanned={repaired['scanned']} "
+                    f"edited={repaired['edited']} "
+                    f"failed={repaired.get('failed', 0)}",
+                    flush=True,
+                )
+            except Exception as exc:
+                print(
+                    f"IRIS_CHANNEL_CAPTION_REPAIR_ERROR {type(exc).__name__}: {exc}",
+                    flush=True,
+                )
 
     if (
         channel_ready
