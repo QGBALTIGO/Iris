@@ -197,7 +197,6 @@ class UserbotManager:
         caption: str | None = None,
         as_video: bool = False,
         progress_callback=None,
-        parse_mode=None,
     ):
         client = await self.client()
         if not await client.is_user_authorized():
@@ -235,21 +234,16 @@ class UserbotManager:
             payload = await upload_path(client, upload_path_value, progress_callback=progress_callback)
 
         try:
-            kwargs = {
-                "caption": caption or "",
-                "force_document": not as_video,
-                "supports_streaming": as_video,
-                "attributes": attributes,
-                "thumb": str(thumb) if thumb and thumb.exists() else None,
-                "mime_type": mime_type,
-                "progress_callback": progress_callback if upload_path_value is None else None,
-            }
-            if parse_mode is not None:
-                kwargs["parse_mode"] = parse_mode
             return await client.send_file(
                 target,
                 payload,
-                **kwargs,
+                caption=caption or "",
+                force_document=not as_video,
+                supports_streaming=as_video,
+                attributes=attributes,
+                thumb=str(thumb) if thumb and thumb.exists() else None,
+                mime_type=mime_type,
+                progress_callback=progress_callback if upload_path_value is None else None,
             )
         finally:
             if thumb:
@@ -296,7 +290,6 @@ class UserbotManager:
                 caption=caption,
                 as_video=as_video,
                 progress_callback=progress_callback,
-                parse_mode=parse_mode,
             )
 
     async def repair_delivery_channel_captions(
