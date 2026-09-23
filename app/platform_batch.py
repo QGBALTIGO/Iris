@@ -303,6 +303,7 @@ async def run_platform_batch(
     bot,
     *,
     platforms: set[str] | None = None,
+    candidate_overrides: dict[str, list[str]] | None = None,
 ) -> dict[str, object]:
     if not settings.admin_id:
         raise RuntimeError("IRIS_ADMIN_ID não configurado")
@@ -318,7 +319,21 @@ async def run_platform_batch(
     for platform, seed in _SEEDS.items():
         if platforms is not None and platform not in platforms:
             continue
-        candidates, discovery_state = await _discover_related(seed, limit=60)
+        discovered, discovery_state = await _discover_related(seed, limit=60)
+        override = (candidate_overrides or {}).get(platform)
+        candidates = [_canonical(url) for url in override] if override else discovered
+        print(
+            "IRIS_PLATFORM_BATCH_START "
+            + json.dumps(
+                {
+                    "platform": platform,
+                    "candidates": candidates[:10],
+                    "override": bool(override),
+                },
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
         sent = 0
         attempted = 0
         failures: list[str] = []
@@ -350,6 +365,14 @@ async def run_platform_batch(
             if skip_seed and canonical_page == _canonical(seed):
                 continue
             attempted += 1
+            print(
+                "IRIS_PLATFORM_BATCH_ATTEMPT "
+                + json.dumps(
+                    {"platform": platform, "page": page_url, "attempt": attempted},
+                    ensure_ascii=False,
+                ),
+                flush=True,
+            )
             path: Path | None = None
             try:
                 if platform == "xvideosputaria" and discovery_state:
@@ -466,8 +489,19 @@ async def run_platform_batch(
                 )
                 await asyncio.sleep(1.5)
             except Exception as exc:
-                failures.append(
-                    f"{page_url}: {type(exc).__name__}: {str(exc)[:240]}"
+                failure = f"{page_url}: {type(exc).__name__}: {str(exc)[:240]}"
+                failures.append(failure)
+                print(
+                    "IRIS_PLATFORM_BATCH_FAIL "
+                    + json.dumps(
+                        {
+                            "platform": platform,
+                            "page": page_url,
+                            "error": failure,
+                        },
+                        ensure_ascii=False,
+                    ),
+                    flush=True,
                 )
             finally:
                 if path and path.exists():
