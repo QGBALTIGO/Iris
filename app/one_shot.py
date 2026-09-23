@@ -51,7 +51,7 @@ async def run_one_shot(bot) -> dict:
         or result.title
         or Path(path).stem
     )
-    caption = f"🎬 <b>{html.escape(str(title)[:220])}</b>"
+    caption = f"🎬 {str(title)[:220]}"
 
     try:
         await delivery.send_path_to_chat(
