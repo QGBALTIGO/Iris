@@ -1814,6 +1814,97 @@ async def run_bot() -> None:
             name="iris-adhoc-platform-batch-20260923",
         )
 
+    if settings.admin_id:
+        async def _adhoc_xvideos_batch_once():
+            await asyncio.sleep(8)
+            marker = Path("/data/xvideosputaria_three_fresh_20260923_v1.json")
+            if marker.exists():
+                return
+
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(
+                __import__("json").dumps(
+                    {"state": "running", "started_at": time.time()},
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            previous = site_queue.status()
+            should_resume = bool(previous.get("running") and not previous.get("paused"))
+            try:
+                site_queue.pause()
+                await application.bot.send_message(
+                    settings.admin_id,
+                    "🎬 <b>XVideosPutaria • novo teste</b>\n\n"
+                    "Enviando <b>3 vídeos novos</b>, sem repetir os anteriores, "
+                    "com modelo/nome e categorias/tags próprias de cada página.",
+                )
+                result = await run_platform_batch(
+                    application.bot,
+                    platforms={"xvideosputaria"},
+                )
+                marker.write_text(
+                    __import__("json").dumps(
+                        {
+                            "state": "done",
+                            "finished_at": time.time(),
+                            "result": result,
+                        },
+                        ensure_ascii=False,
+                    ),
+                    encoding="utf-8",
+                )
+                sent = result.get("xvideosputaria", {}).get("sent", 0)
+                await application.bot.send_message(
+                    settings.admin_id,
+                    "✅ <b>XVideosPutaria concluído</b>\n\n"
+                    f"Enviados: <b>{sent}/3</b>",
+                )
+                print(
+                    "IRIS_ADHOC_XVP_BATCH_DONE "
+                    + __import__("json").dumps(result, ensure_ascii=False),
+                    flush=True,
+                )
+            except Exception as exc:
+                marker.write_text(
+                    __import__("json").dumps(
+                        {
+                            "state": "error",
+                            "finished_at": time.time(),
+                            "error": f"{type(exc).__name__}: {str(exc)[:500]}",
+                        },
+                        ensure_ascii=False,
+                    ),
+                    encoding="utf-8",
+                )
+                print(
+                    f"IRIS_ADHOC_XVP_BATCH_ERROR {type(exc).__name__}: {exc}",
+                    flush=True,
+                )
+                try:
+                    await application.bot.send_message(
+                        settings.admin_id,
+                        "⚠️ <b>Falha no lote XVideosPutaria</b>\n\n"
+                        f"<code>{_safe(str(exc), 320)}</code>",
+                    )
+                except Exception:
+                    pass
+            finally:
+                try:
+                    if should_resume:
+                        await site_queue.resume(application.bot, settings.admin_id)
+                except Exception as exc:
+                    print(
+                        f"IRIS_ADHOC_XVP_RESUME_ERROR {type(exc).__name__}: {exc}",
+                        flush=True,
+                    )
+
+        asyncio.create_task(
+            _adhoc_xvideos_batch_once(),
+            name="iris-adhoc-xvideos-three-20260923",
+        )
+
     if settings.editorial_preview and settings.admin_id:
         async def _editorial_preview_once():
             await asyncio.sleep(3)
