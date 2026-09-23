@@ -1693,28 +1693,26 @@ async def run_bot() -> None:
             queue_state = site_queue.status()
             counts = queue_state.get("counts") or {}
             pending = int(counts.get("pending", 0)) + int(counts.get("retry_local", 0))
+            processing = (
+                int(counts.get("processing", 0))
+                + int(counts.get("awaiting_delivery", 0))
+            )
+            outstanding = pending + processing
 
-            if channel_ready and queue_state.get("running") and not queue_state.get("paused"):
-                resumed = await site_queue.maybe_resume(application.bot)
-                if resumed and settings.admin_id:
-                    await application.bot.send_message(
-                        settings.admin_id,
-                        "♻️ <b>Fila retomada automaticamente</b>\n\n"
-                        "Continuando do ponto salvo antes do reinício.",
-                    )
-            elif (
+            # IRIS_SITE_QUEUE_AUTO_START is the 24/7 switch for the legendados
+            # channel. When enabled, a stale persisted "paused" bit must never
+            # keep the worker offline after a Railway restart.
+            if (
                 channel_ready
                 and settings.site_queue_auto_start
                 and settings.admin_id
-                and not queue_state.get("running")
-                and pending > 0
+                and outstanding > 0
             ):
-                await site_queue.start(application.bot, settings.admin_id, discover=False)
-                await application.bot.send_message(
-                    settings.admin_id,
-                    "▶️ <b>Fila reativada</b>\n\n"
-                    f"⏳ <b>{pending}</b> item(ns) ainda estavam pendentes. "
-                    "Continuando de onde parou.",
+                await site_queue.resume(application.bot, settings.admin_id)
+                print(
+                    "IRIS_LEGENDADOS_ALWAYS_ON "
+                    + site_queue.summary_for_logs(),
+                    flush=True,
                 )
             elif (
                 channel_ready
@@ -1724,11 +1722,9 @@ async def run_bot() -> None:
             ):
                 stats = await site_queue.discover()
                 await site_queue.start(application.bot, settings.admin_id, discover=False)
-                await application.bot.send_message(
-                    settings.admin_id,
-                    "▶️ <b>Teste do catálogo iniciado</b>\n\n"
-                    f"🎞️ Itens registrados: <b>{stats['total']}</b>\n"
-                    "Vou enviar um por um e salvar o progresso automaticamente.",
+                print(
+                    f"IRIS_LEGENDADOS_DISCOVERED total={stats['total']}",
+                    flush=True,
                 )
     except Exception as exc:
         print(f"IRIS_QUEUE_RESUME_ERROR {type(exc).__name__}: {exc}", flush=True)
