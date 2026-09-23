@@ -176,6 +176,8 @@ async def probe_browser(
                             locator = frame.locator(selector).first
                             if await locator.count():
                                 await locator.click(timeout=700, force=True)
+                                if selector == ".player_select_item":
+                                    await page.wait_for_timeout(2200)
                                 break
 
             with suppress(Exception):
