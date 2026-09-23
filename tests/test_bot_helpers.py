@@ -99,7 +99,7 @@ def test_delivery_caption_uses_editorial_block():
         },
     )
     caption = delivery_caption(resource, as_video=True)
-    assert caption.startswith("<b>🚫 #Ruiva_Isabell</b>")
+    assert caption.startswith("<b>🚫 Ruiva Isabell</b>")
     assert "\n\n<blockquote expandable>" in caption
     assert "#Pornô_Longo / #Famosas / #Lésbicas / #Boquetes / #Anal / #Gostosas" in caption
     assert "🎬 Título do vídeo" not in caption
