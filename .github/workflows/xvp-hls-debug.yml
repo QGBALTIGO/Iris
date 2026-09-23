@@ -1,4 +1,5 @@
 name: XVideosPutaria HLS debug
+# targeted-three-v2
 
 on:
   push:
@@ -30,10 +31,21 @@ jobs:
           from app.video_candidates import video_candidate_rank
           from app.models import ResourceType
 
-          URL="https://xvideosputaria.com/anao-gabriela-gadotti-mini-gabys-boquetando-com-leite-na-boca/#forward"
+          URLS=[
+              "https://xvideosputaria.com/pamela-alves-sendo-arrombada-pela-maior-piroca-do-brasil/",
+              "https://xvideosputaria.com/gostosa-jaqueline-gomes-fodendo-na-academia-com-o-novinho-e/",
+              "https://xvideosputaria.com/maru-tinha-um-consolo-e-um-leite-condensado-e-resolveu-gravar-pelada-hd/",
+          ]
 
-          async def main():
-              result=await Analyzer().analyze(URL,deep=True)
+          async def inspect(url):
+              try:
+                  result=await asyncio.wait_for(Analyzer().analyze(url,deep=True),timeout=55)
+              except Exception as exc:
+                  print("XVP_HLS_DEBUG "+json.dumps({
+                      "url":url,
+                      "error":f"{type(exc).__name__}: {exc}"
+                  },ensure_ascii=False))
+                  return
               rows=[]
               for r in result.resources:
                   if r.type in {ResourceType.VIDEO,ResourceType.PLAYLIST,ResourceType.STREAM} or urlsplit(r.url).path.lower().endswith((".ts",".m3u8",".mpd",".mp4")):
@@ -48,10 +60,15 @@ jobs:
                       })
               rows.sort(key=lambda x:x["rank"])
               print("XVP_HLS_DEBUG "+json.dumps({
+                  "url":url,
                   "title":result.title,
                   "warnings":result.warnings,
                   "resources":rows[:80]
               },ensure_ascii=False))
+
+          async def main():
+              for url in URLS:
+                  await inspect(url)
 
           asyncio.run(main())
           PY
