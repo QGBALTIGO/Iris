@@ -545,10 +545,32 @@ async def run_bot() -> None:
         markup = InlineKeyboardMarkup([
             [
                 InlineKeyboardButton(
-                    "Assine agora!",
+                    "🔥🔞 Assine agora! 🔞🔥",
                     web_app=WebAppInfo(url=settings.subscribe_webapp_url),
                 )
             ]
+        ])
+
+        catalog_text = (
+            "<b>Vídeos legendados, organizados e fáceis de encontrar.</b>\n\n"
+            "<blockquote>Explore o catálogo por novidades e categorias em uma navegação rápida, "
+            "limpa e feita para celular ou computador.</blockquote>\n\n"
+            "<b>Catálogo disponível, 959+ vídeos publicados e organizados! 🔥</b>\n\n"
+            "<b>▶ Novidades adicionadas com frequência. Conteúdo com legenda em português!</b>"
+        )
+        catalog_markup = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(
+                    "🔞 Assine agora VIP! 🔞",
+                    web_app=WebAppInfo(url=settings.subscribe_webapp_url),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🔥 Vídeos legendados! 🔥",
+                    web_app=WebAppInfo(url=settings.legendados_webapp_url),
+                )
+            ],
         ])
         saved_id_path = Path("/data/iris_start_video_file_id.txt")
         saved_file_id = None
@@ -567,19 +589,28 @@ async def run_bot() -> None:
                     reply_markup=markup,
                     supports_streaming=True,
                 )
-                return
             except Exception as exc:
                 print(
                     f"IRIS_START_VIDEO_SEND_ERROR {type(exc).__name__}: {str(exc)[:240]}",
                     flush=True,
                 )
+                await message.reply_text(
+                    caption,
+                    reply_markup=markup,
+                )
 
         # Never fall back to the CHelpBot thumbnail: it is only the video's
         # poster image. Until the Iris-specific video file_id is saved, keep
         # the subscription CTA functional without sending the wrong media.
+        if not video_file_id:
+            await message.reply_text(
+                caption,
+                reply_markup=markup,
+            )
+
         await message.reply_text(
-            caption,
-            reply_markup=markup,
+            catalog_text,
+            reply_markup=catalog_markup,
         )
 
     async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
