@@ -34,6 +34,7 @@ def relay_caption(
     *,
     queue_item_id: int | None = None,
     expected_kind: str | None = None,
+    channel_delivery: bool = False,
 ) -> str:
     payload = {
         "chat_id": int(chat_id),
@@ -43,6 +44,8 @@ def relay_caption(
         payload["queue_item_id"] = int(queue_item_id)
     if expected_kind:
         payload["expected_kind"] = str(expected_kind)
+    if channel_delivery:
+        payload["channel_delivery"] = True
     encoded = base64.urlsafe_b64encode(
         json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     ).decode("ascii")
@@ -68,6 +71,7 @@ def parse_relay_payload(value: str | None) -> dict[str, object] | None:
                 if data.get("expected_kind")
                 else None
             ),
+            "channel_delivery": bool(data.get("channel_delivery")),
         }
     except Exception:
         return None
@@ -179,6 +183,7 @@ class DeliveryManager:
                     caption,
                     queue_item_id=queue_item_id,
                     expected_kind="video" if as_video else None,
+                    channel_delivery=True,
                 ),
                 as_video=as_video,
                 progress_callback=progress_callback,
