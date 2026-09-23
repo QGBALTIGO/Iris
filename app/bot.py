@@ -550,13 +550,11 @@ async def run_bot() -> None:
                 )
             ]
         ])
-        await message.reply_photo(
-            photo=(
-                "https://photo.chelpbot.me/"
-                "BAACAgEAAxkBdYqCnmq0WN9npgwrhS6twnrTjeo_qUcbAAI_BgACAwQZRz2wQYPyMoTePQQ/photo.jpg"
-            ),
+        await message.reply_video(
+            video=settings.start_video_file_id,
             caption=caption,
             reply_markup=markup,
+            supports_streaming=True,
         )
 
     async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1516,6 +1514,20 @@ async def run_bot() -> None:
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
 
     await application.initialize()
+
+    try:
+        start_file = await application.bot.get_file(settings.start_video_file_id)
+        print(
+            "IRIS_START_VIDEO_OK "
+            f"file_id={settings.start_video_file_id[:16]}... "
+            f"path={getattr(start_file, 'file_path', None)}",
+            flush=True,
+        )
+    except Exception as exc:
+        print(
+            f"IRIS_START_VIDEO_ERROR {type(exc).__name__}: {str(exc)[:300]}",
+            flush=True,
+        )
 
     try:
         await application.bot.set_my_commands(
