@@ -1,0 +1,69 @@
+name: Pobreflix full HLS download
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/pobreflix-full-hls-download.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg aria2
+      - run: python -m playwright install --with-deps chromium
+      - name: Download full Pobreflix movie
+        env:
+          IRIS_DOWNLOADS_DIR: /tmp/iris-pobre
+          IRIS_MAX_BROWSER_REQUESTS: "3000"
+        run: |
+          python - <<'PY'
+          import asyncio, json, time
+          from pathlib import Path
+          from app.analyzer import Analyzer
+          from app.video_candidates import download_first_valid_video
+
+          URL="https://www.pobrenow.com/filme/vamos-time-2026"
+
+          async def main():
+              started=time.monotonic()
+              result=await Analyzer().analyze(URL,deep=True)
+              resources=[
+                  {"url":r.url,"type":r.type.value,"source":r.source,"mime":r.mime_type,"variants":len(r.variants)}
+                  for r in result.resources
+                  if r.type.value in {"video","playlist","stream"}
+              ]
+              resource,path,generated,info,rejected=await download_first_valid_video(result.resources)
+              row={
+                  "title":result.title,
+                  "analyze_seconds":round(time.monotonic()-started,3),
+                  "warnings":result.warnings,
+                  "resources":resources[:40],
+                  "selected":resource.url,
+                  "selected_type":resource.type.value,
+                  "selected_source":resource.source,
+                  "path":str(path),
+                  "bytes":path.stat().st_size,
+                  "duration":info.duration,
+                  "width":info.width,
+                  "height":info.height,
+                  "codec":info.codec,
+                  "audio":info.audio_codec,
+                  "format":info.format_name,
+                  "rejected":rejected,
+              }
+              print("POBRE_FULL "+json.dumps(row,ensure_ascii=False))
+              assert path.suffix.lower()==".mp4"
+              assert info.duration>=60
+              assert info.width>=160 and info.height>=90
+              path.unlink(missing_ok=True)
+
+          asyncio.run(main())
+          PY
