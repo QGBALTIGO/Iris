@@ -52,6 +52,7 @@ class Settings:
     run_admin_test_suite: bool = _bool("IRIS_RUN_ADMIN_TEST_SUITE", False)
     admin_test_nonce: str | None = os.getenv("IRIS_ADMIN_TEST_NONCE")
     site_queue_auto_start: bool = _bool("IRIS_SITE_QUEUE_AUTO_START", False)
+    queue_recovery_nonce: str | None = os.getenv("IRIS_QUEUE_RECOVERY_NONCE")
     one_shot_url: str | None = os.getenv("IRIS_ONE_SHOT_URL")
     one_shot_nonce: str | None = os.getenv("IRIS_ONE_SHOT_NONCE")
 
