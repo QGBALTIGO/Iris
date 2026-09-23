@@ -492,6 +492,7 @@ async def run_bot() -> None:
         InlineKeyboardButton,
         InlineKeyboardMarkup,
         Update,
+        WebAppInfo,
     )
     from telegram.constants import ParseMode
     from telegram.ext import (
@@ -533,18 +534,29 @@ async def run_bot() -> None:
         return InlineKeyboardMarkup(rows)
 
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        uid = update.effective_user.id if update.effective_user else None
-        if not _can_use(uid):
+        message = update.effective_message
+        if message is None:
             return
-        await update.effective_message.reply_text(
-            "✨ <b>IRIS</b>\n\n"
-            "Envie um <b>link</b> e eu procuro vídeos, streams, imagens, páginas, áudios e arquivos.\n\n"
-            "🎬 vídeos e players\n"
-            "📖 capítulos e leitores\n"
-            "🖼️ imagens\n"
-            "📦 arquivos\n"
-            "⚡ downloads em lote\n\n"
-            "É só mandar a URL."
+
+        caption = (
+            "👉 <b>Selecione o plano desejado!</b>\n\n"
+            "<i>Efetue o pagamento e receba o link de acesso em instantes automaticamente!</i>"
+        )
+        markup = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(
+                    "Assine agora!",
+                    web_app=WebAppInfo(url=settings.subscribe_webapp_url),
+                )
+            ]
+        ])
+        await message.reply_photo(
+            photo=(
+                "https://photo.chelpbot.me/"
+                "BAACAgEAAxkBdYqCnmq0WN9npgwrhS6twnrTjeo_qUcbAAI_BgACAwQZRz2wQYPyMoTePQQ/photo.jpg"
+            ),
+            caption=caption,
+            reply_markup=markup,
         )
 
     async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
