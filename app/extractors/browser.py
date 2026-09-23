@@ -262,6 +262,13 @@ async def probe_browser(
                 page_html = await page.content()
                 page_editorial = extract_editorial_metadata(page_html, page.url).as_dict()
 
+            browser_editorial = None
+            browser_title = None
+            with suppress(Exception):
+                rendered_html = await page.content()
+                browser_editorial = extract_editorial_metadata(rendered_html, page.url).as_dict()
+                browser_title = browser_editorial.get("title") if browser_editorial else None
+
             with suppress(Exception):
                 extra_urls = await page.evaluate(
                     """() => {
@@ -331,6 +338,13 @@ async def probe_browser(
                         item.metadata.setdefault("page_title", page_title)
                         if not item.title:
                             item.title = page_title
+            if browser_editorial:
+                for item in found:
+                    item.metadata.setdefault("editorial", browser_editorial)
+                    item.metadata.setdefault("page_url", page.url)
+                    if browser_title and not item.title:
+                        item.title = str(browser_title)
+
         finally:
             await context.close()
             await browser.close()
