@@ -1729,7 +1729,7 @@ async def run_bot() -> None:
     if settings.admin_id:
         async def _adhoc_platform_batch_once():
             await asyncio.sleep(7)
-            marker = Path("/data/platform_batch_once_20260923_three_each_v1.json")
+            marker = Path("/data/platform_batch_once_20260923_three_each_v2.json")
             if marker.exists():
                 return
 
