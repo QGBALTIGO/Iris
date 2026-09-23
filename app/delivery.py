@@ -111,6 +111,33 @@ class DeliveryManager:
     async def userbot_ready(self) -> bool:
         return await userbot.is_authorized()
 
+    async def delivery_channel_info(self) -> dict[str, object] | None:
+        if not self.config.delivery_channel_invite:
+            return None
+        return await userbot.delivery_target_info(self.config.delivery_channel_invite)
+
+    async def send_path_to_delivery_channel(
+        self,
+        path: Path,
+        *,
+        caption: str | None = None,
+        as_video: bool = True,
+        progress_callback=None,
+    ):
+        if not self.config.delivery_channel_invite:
+            raise RuntimeError("Canal de entrega não configurado.")
+        if not path.is_file():
+            raise FileNotFoundError(path)
+        if not await userbot.is_authorized():
+            raise RuntimeError("Conta 06 não autenticada.")
+        return await userbot.send_to_delivery_channel(
+            self.config.delivery_channel_invite,
+            path,
+            caption=caption,
+            as_video=as_video,
+            progress_callback=progress_callback,
+        )
+
     async def _send_to_bot_target(
         self,
         bot,
@@ -187,11 +214,28 @@ class DeliveryManager:
         queue_item_id: int | None = None,
         as_video: bool = False,
         progress_callback=None,
-    ) -> None:
+    ) -> dict[str, object]:
         if not path.is_file():
             raise FileNotFoundError(path)
         if not await userbot.is_authorized():
             raise RuntimeError("Conta 06 não autenticada.")
+
+        if (
+            as_video
+            and self.config.delivery_channel_only
+            and self.config.delivery_channel_invite
+        ):
+            sent = await self.send_path_to_delivery_channel(
+                path,
+                caption=caption,
+                as_video=True,
+                progress_callback=progress_callback,
+            )
+            return {
+                "mode": "channel",
+                "message_id": getattr(sent, "id", None),
+            }
+
         await self._send_to_bot_target(
             bot,
             chat_id,
@@ -201,6 +245,7 @@ class DeliveryManager:
             queue_item_id=queue_item_id,
             progress_callback=progress_callback,
         )
+        return {"mode": "relay", "message_id": None}
 
     async def send_remote_resource(
         self,
@@ -268,6 +313,19 @@ class DeliveryManager:
     ) -> str:
         if not path.is_file():
             raise FileNotFoundError(path)
+
+        if (
+            as_video
+            and self.config.delivery_channel_only
+            and self.config.delivery_channel_invite
+        ):
+            await self.send_path_to_delivery_channel(
+                path,
+                caption=caption,
+                as_video=True,
+                progress_callback=progress_callback,
+            )
+            return "channel:userbot"
 
         send_path = path
         generated_mp4 = False
