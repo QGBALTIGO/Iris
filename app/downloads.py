@@ -88,8 +88,31 @@ class DownloadEngine:
             except Exception:
                 return await self._httpx(resource, target, progress)
         if engine in {"n_m3u8dl-re", "yt-dlp"}:
-            return await self._stream_tool(resource, target, engine, progress)
+            errors: list[str] = []
+            chain = [engine]
+            for fallback in ("n_m3u8dl-re", "yt-dlp", "ffmpeg", "streamlink"):
+                if fallback not in chain:
+                    chain.append(fallback)
+            for candidate in chain:
+                if candidate == "n_m3u8dl-re" and not shutil.which("N_m3u8DL-RE"):
+                    continue
+                if candidate == "yt-dlp" and not shutil.which("yt-dlp"):
+                    continue
+                if candidate == "ffmpeg" and not shutil.which("ffmpeg"):
+                    continue
+                if candidate == "streamlink" and not shutil.which("streamlink"):
+                    continue
+                try:
+                    return await self._stream_tool(resource, target, candidate, progress)
+                except Exception as exc:
+                    errors.append(f"{candidate}: {type(exc).__name__}: {str(exc)[:300]}")
+                    target.unlink(missing_ok=True)
+            raise DownloadRejected("Todos os motores de stream falharam: " + " | ".join(errors[-4:]))
         if engine == "unsupported-stream":
+            if shutil.which("ffmpeg"):
+                return await self._stream_tool(resource, target, "ffmpeg", progress)
+            if shutil.which("streamlink"):
+                return await self._stream_tool(resource, target, "streamlink", progress)
             raise DownloadRejected("Stream detectado, mas não há motor HLS/DASH instalado")
         if engine == "unsupported-ytdlp":
             raise DownloadRejected("Esse recurso precisa do yt-dlp")
@@ -164,16 +187,31 @@ class DownloadEngine:
 
     async def _stream_tool(self, resource: MediaResource, target: Path, engine: str, progress=None) -> Path:
         if engine == "n_m3u8dl-re":
-            cmd = ["N_m3u8DL-RE", resource.url, "--save-dir", str(target.parent), "--save-name", target.stem, "--auto-select"]
+            cmd = [
+                "N_m3u8DL-RE",
+                resource.url,
+                "--save-dir", str(target.parent),
+                "--save-name", target.stem,
+                "--auto-select",
+                "--thread-count", "16",
+                "--download-retry-count", "5",
+                "--http-request-timeout", "30",
+                "--check-segments-count",
+                "--del-after-done",
+                "--no-log",
+                "--disable-update-check",
+                "-mt",
+                "-M", "format=mp4",
+            ]
             for key, value in _replay_headers(resource.headers).items():
                 cmd.extend(["--header", f"{key}: {value}"])
-        else:
+        elif engine == "yt-dlp":
             cmd = [
                 "yt-dlp",
                 "--no-part",
                 "--no-playlist",
                 "--newline",
-                "--concurrent-fragments", "8",
+                "--concurrent-fragments", "12",
                 "--merge-output-format", "mp4",
                 "--remux-video", "mp4",
                 "-o", str(target),
@@ -181,6 +219,38 @@ class DownloadEngine:
             for key, value in _replay_headers(resource.headers).items():
                 cmd.extend(["--add-header", f"{key}:{value}"])
             cmd.append(resource.url)
+        elif engine == "ffmpeg":
+            cmd = [
+                "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+            ]
+            for key, value in _replay_headers(resource.headers).items():
+                if key.lower() == "user-agent":
+                    cmd.extend(["-user_agent", value])
+                elif key.lower() == "referer":
+                    cmd.extend(["-referer", value])
+            cmd.extend([
+                "-i", resource.url,
+                "-map", "0:v:0?",
+                "-map", "0:a:0?",
+                "-c", "copy",
+                "-movflags", "+faststart",
+                str(target),
+            ])
+        elif engine == "streamlink":
+            cmd = [
+                "streamlink",
+                "--retry-streams", "1",
+                "--stream-segment-attempts", "5",
+                "--stream-segment-threads", "8",
+                "--force",
+                "-o", str(target),
+                resource.url,
+                "best",
+            ]
+            for key, value in _replay_headers(resource.headers).items():
+                cmd.extend(["--http-header", f"{key}={value}"])
+        else:
+            raise DownloadRejected(f"Motor de stream desconhecido: {engine}")
         await _run(cmd, progress=progress)
         return _resolve_stream_output(target)
 
