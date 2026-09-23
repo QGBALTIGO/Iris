@@ -58,6 +58,7 @@ class Settings:
     delivery_channel_invite: str | None = os.getenv("IRIS_DELIVERY_CHANNEL_INVITE")
     delivery_channel_only: bool = _bool("IRIS_DELIVERY_CHANNEL_ONLY", False)
     backfill_channel_history: bool = _bool("IRIS_BACKFILL_CHANNEL_HISTORY", False)
+    repair_channel_captions: bool = _bool("IRIS_REPAIR_CHANNEL_CAPTIONS", False)
     backfill_urls_json: str = os.getenv("IRIS_BACKFILL_URLS_JSON", "[]")
 
 
