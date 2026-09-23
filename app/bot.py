@@ -205,10 +205,8 @@ def _analysis_text(result: AnalyzeResult, elapsed: float | None = None) -> str:
         "",
         f"🎯 <b>{title}</b>",
         f"🌐 <code>{_safe(_domain(result.final_url), 80)}</code>",
+        "",
     ]
-    if result.service:
-        lines.append(f"📺 Plataforma: <b>{_safe(result.service, 60)}</b>")
-    lines.append("")
     if stats["videos"]:
         lines.append(f"🎬 Vídeos/streams: <b>{stats['videos']}</b>")
     if stats["audio"]:
@@ -223,10 +221,6 @@ def _analysis_text(result: AnalyzeResult, elapsed: float | None = None) -> str:
         lines.append(f"📦 Arquivos: <b>{stats['files']}</b>")
     if stats["drm"]:
         lines.append(f"🔒 Mídia protegida: <b>{stats['drm']}</b>")
-        if result.drm_systems:
-            lines.append(
-                f"🛡️ Proteção: <b>{_safe(' + '.join(result.drm_systems), 90)}</b>"
-            )
     if not any(stats.values()):
         lines.append("🤷 Nenhum recurso útil encontrado.")
     if elapsed is not None:
@@ -764,14 +758,8 @@ async def run_bot() -> None:
             if quality:
                 suffix += f" • {quality}"
             if resource.drm:
-                systems = resource.metadata.get("drm_systems") or []
-                protection = "/".join(str(item) for item in systems[:2]) if systems else "DRM"
-                suffix += f" • 🔒 {protection}"
-            elif resource.encrypted:
-                systems = resource.metadata.get("drm_systems") or []
-                protection = "/".join(str(item) for item in systems[:2]) if systems else "criptografado"
-                suffix += f" • 🔐 {protection}"
-            lines.append(f"<b>{offset + 1}.</b> {_safe(label, 58)}{_safe(suffix, 58)}")
+                suffix += " • 🔒 DRM"
+            lines.append(f"<b>{offset + 1}.</b> {_safe(label, 58)}{_safe(suffix, 30)}")
             if bucket == "v" and not resource.drm:
                 rows.append([
                     InlineKeyboardButton(
