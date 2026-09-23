@@ -1730,6 +1730,10 @@ async def run_bot() -> None:
         async def _adhoc_platform_batch_once():
             await asyncio.sleep(7)
             marker = Path("/data/platform_batch_once_20260923_three_each_v3.json")
+            print(
+                f"IRIS_ADHOC_XVP_START marker={marker} exists={marker.exists()}",
+                flush=True,
+            )
             if marker.exists():
                 return
 
@@ -1817,7 +1821,7 @@ async def run_bot() -> None:
     if settings.admin_id:
         async def _adhoc_xvideos_batch_once():
             await asyncio.sleep(8)
-            marker = Path("/data/xvideosputaria_three_fresh_20260923_v1.json")
+            marker = Path("/data/xvideosputaria_three_fresh_20260923_v2.json")
             if marker.exists():
                 return
 
@@ -1843,6 +1847,13 @@ async def run_bot() -> None:
                 result = await run_platform_batch(
                     application.bot,
                     platforms={"xvideosputaria"},
+                    candidate_overrides={
+                        "xvideosputaria": [
+                            "https://xvideosputaria.com/pamela-alves-sendo-arrombada-pela-maior-piroca-do-brasil/",
+                            "https://xvideosputaria.com/gostosa-jaqueline-gomes-fodendo-na-academia-com-o-novinho-e/",
+                            "https://xvideosputaria.com/maru-tinha-um-consolo-e-um-leite-condensado-e-resolveu-gravar-pelada-hd/",
+                        ],
+                    },
                 )
                 marker.write_text(
                     __import__("json").dumps(
