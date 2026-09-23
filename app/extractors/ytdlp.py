@@ -13,7 +13,7 @@ async def probe_ytdlp(url: str, timeout: float = 35.0) -> list[MediaResource]:
         return []
 
     def _run() -> list[MediaResource]:
-        options = {
+        base_options = {
             "quiet": True,
             "no_warnings": True,
             "skip_download": True,
@@ -21,8 +21,22 @@ async def probe_ytdlp(url: str, timeout: float = 35.0) -> list[MediaResource]:
             "extract_flat": False,
             "socket_timeout": 15,
         }
-        with yt_dlp.YoutubeDL(options) as ydl:
-            info = ydl.extract_info(url, download=False)
+
+        def extract(options):
+            with yt_dlp.YoutubeDL(options) as ydl:
+                return ydl.extract_info(url, download=False)
+
+        try:
+            info = extract(base_options)
+        except Exception as exc:
+            message = str(exc).lower()
+            if not any(token in message for token in ("403", "cloudflare", "impersonat", "forbidden")):
+                raise
+            retry_options = dict(base_options)
+            retry_options["impersonate"] = "chrome"
+            retry_options["extractor_args"] = {"generic": {"impersonate": ["chrome"]}}
+            info = extract(retry_options)
+
         return _convert(info)
 
     try:
