@@ -718,7 +718,7 @@ class SiteQueueManager:
             last_error=None,
         )
 
-        caption = f"🎬 <b>{html_lib.escape(title[:220])}</b>"
+        caption = f"🎬 {title[:220]}"
         # For this site's large CDN videos, Telegram external-URL fetches
         # regularly time out. The catalogue queue intentionally exercises the
         # full production path: web download -> native MTProto video upload.
