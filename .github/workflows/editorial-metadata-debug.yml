@@ -1,5 +1,5 @@
 name: Editorial metadata debug
-# live-short-validation-v2
+# live-short-validation-v3
 
 on:
   push:
