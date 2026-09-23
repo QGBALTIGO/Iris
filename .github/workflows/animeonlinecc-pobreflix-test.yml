@@ -1,0 +1,101 @@
+name: AnimeOnlineCC and Pobreflix full video test
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/animeonlinecc-pobreflix-test.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg aria2
+      - run: python -m playwright install --with-deps chromium
+      - name: Analyze and download full videos
+        env:
+          IRIS_DOWNLOADS_DIR: /tmp/iris-stream-test
+          IRIS_MAX_BROWSER_REQUESTS: "2500"
+        run: |
+          python - <<'PY'
+          import asyncio, json, time
+          from pathlib import Path
+
+          from app.analyzer import Analyzer
+          from app.video_candidates import download_first_valid_video
+
+          URLS = {
+              "animeonlinecc_black_clover_170": "https://animesonlinecc.to/episodio/black-clover-episodio-170/",
+              "pobreflix_vamos_time": "https://www.pobrenow.com/filme/vamos-time-2026",
+          }
+
+          async def run_one(name, url):
+              started = time.monotonic()
+              result = await Analyzer().analyze(url, deep=True)
+              analyzed = round(time.monotonic() - started, 3)
+              candidates = [
+                  {
+                      "url": r.url,
+                      "type": r.type.value,
+                      "source": r.source,
+                      "mime": r.mime_type,
+                      "drm": r.drm,
+                      "hls_segment": r.metadata.get("hls_segment"),
+                      "variants": len(r.variants),
+                  }
+                  for r in result.resources
+                  if r.type.value in {"video", "playlist", "stream"}
+              ]
+              row = {
+                  "name": name,
+                  "url": url,
+                  "title": result.title,
+                  "analyze_seconds": analyzed,
+                  "warnings": result.warnings,
+                  "candidate_count": len(candidates),
+                  "candidates": candidates[:40],
+              }
+
+              try:
+                  resource, path, generated, info, rejected = await download_first_valid_video(result.resources)
+                  row.update({
+                      "ok": True,
+                      "selected": resource.url,
+                      "selected_type": resource.type.value,
+                      "selected_source": resource.source,
+                      "path": str(path),
+                      "bytes": path.stat().st_size,
+                      "duration": info.duration,
+                      "width": info.width,
+                      "height": info.height,
+                      "codec": info.codec,
+                      "audio": info.audio_codec,
+                      "format": info.format_name,
+                      "rejected": rejected,
+                  })
+                  print("STREAM_SITE_TEST " + json.dumps(row, ensure_ascii=False))
+                  assert path.suffix.lower() == ".mp4"
+                  assert info.width >= 160 and info.height >= 90
+                  assert info.duration >= 60, f"{name}: duração curta demais ({info.duration}s)"
+                  path.unlink(missing_ok=True)
+              except Exception as exc:
+                  row.update({
+                      "ok": False,
+                      "error": f"{type(exc).__name__}: {str(exc)[:1000]}",
+                  })
+                  print("STREAM_SITE_TEST " + json.dumps(row, ensure_ascii=False))
+
+          async def main():
+              Path("/tmp/iris-stream-test").mkdir(parents=True, exist_ok=True)
+              for name, url in URLS.items():
+                  await run_one(name, url)
+
+          asyncio.run(main())
+          PY
