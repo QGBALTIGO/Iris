@@ -45,6 +45,7 @@ class Settings:
     cleanup_after_delivery: bool = _bool("IRIS_CLEANUP_AFTER_DELIVERY", True)
     notify_startup: bool = _bool("IRIS_NOTIFY_STARTUP", False)
     subscribe_webapp_url: str = os.getenv("IRIS_SUBSCRIBE_WEBAPP_URL", "https://example.com/")
+    legendados_webapp_url: str = os.getenv("IRIS_LEGENDADOS_WEBAPP_URL", "https://example.com/")
     start_video_file_id: str | None = os.getenv("IRIS_START_VIDEO_FILE_ID")
     run_benchmark: bool = _bool("IRIS_RUN_BENCHMARK", False)
     run_video_smoke: bool = _bool("IRIS_RUN_VIDEO_SMOKE", False)
