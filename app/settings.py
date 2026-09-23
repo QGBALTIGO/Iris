@@ -44,6 +44,7 @@ class Settings:
     bot_upload_limit_bytes: int = int(os.getenv("IRIS_BOT_UPLOAD_LIMIT_BYTES", str(45 * 1024 * 1024)))
     cleanup_after_delivery: bool = _bool("IRIS_CLEANUP_AFTER_DELIVERY", True)
     notify_startup: bool = _bool("IRIS_NOTIFY_STARTUP", False)
+    subscribe_webapp_url: str = os.getenv("IRIS_SUBSCRIBE_WEBAPP_URL", "https://example.com/")
     run_benchmark: bool = _bool("IRIS_RUN_BENCHMARK", False)
     run_video_smoke: bool = _bool("IRIS_RUN_VIDEO_SMOKE", False)
     run_large_video_smoke: bool = _bool("IRIS_RUN_LARGE_VIDEO_SMOKE", False)
