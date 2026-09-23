@@ -90,8 +90,17 @@ async def _analyze_site(name: str, url: str, *, download: bool = False, expect_d
         )
 
     if not media:
+        anti_bot = next(
+            (
+                warning for warning in result.warnings
+                if "Cloudflare" in warning or "anti-bot" in warning
+            ),
+            None,
+        )
+        if anti_bot:
+            raise AssertionError(f"{profile.label}: {anti_bot}")
         raise AssertionError(
-            f"nenhuma mídia detectada • avisos={result.warnings[:3]}"
+            f"{profile.label}: nenhuma mídia detectada • avisos={result.warnings[:3]}"
         )
 
     if not download:
