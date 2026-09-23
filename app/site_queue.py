@@ -16,6 +16,7 @@ import httpx
 from app.analyzer import Analyzer
 from app.delivery import DeliveryManager
 from app.downloads import DownloadEngine
+from app.editorial import format_video_caption
 from app.models import MediaResource, ResourceType
 from app.settings import settings
 from app.video_candidates import download_first_valid_video
