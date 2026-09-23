@@ -88,6 +88,7 @@ class Analyzer:
         browser_fallback = blocked_status in {401, 403, 429}
         if deep:
             await self._deep_probe(final_url, resources, warnings)
+            await self._probe_embedded_players(final_url, resources, warnings)
         elif self.config.browser_enabled and browser_fallback:
             try:
                 resources.extend(
@@ -166,6 +167,45 @@ class Analyzer:
                 warnings.append(f"{name} falhou: {type(result).__name__}")
                 continue
             resources.extend(result)
+
+    async def _probe_embedded_players(
+        self,
+        parent_url: str,
+        resources: list[MediaResource],
+        warnings: list[str],
+    ) -> None:
+        if not self.config.browser_enabled:
+            return
+
+        candidates: list[str] = []
+        for resource in resources:
+            if resource.source != "html:iframe":
+                continue
+            url = resource.url
+            lower = url.lower()
+            if any(token in lower for token in ("/embed", "/player", "/movie/", "/episode/", "/watch/")):
+                candidates.append(url)
+
+        seen: set[str] = set()
+        for iframe_url in candidates[:3]:
+            if iframe_url in seen:
+                continue
+            seen.add(iframe_url)
+            try:
+                nested = await probe_browser(
+                    iframe_url,
+                    max_requests=min(self.config.max_browser_requests, 1800),
+                    timeout_ms=18_000,
+                    interaction_rounds=8,
+                    disable_gpu=self.config.browser_disable_gpu,
+                )
+                for item in nested:
+                    item.metadata.setdefault("embed_parent", parent_url)
+                resources.extend(nested)
+            except Exception as exc:
+                warnings.append(
+                    f"Player externo falhou: {type(exc).__name__}"
+                )
 
     async def _annotate_chapter_exportability(
         self,
