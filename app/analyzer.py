@@ -52,9 +52,16 @@ class Analyzer:
             page = await self.fetcher.fetch(url)
         except httpx.HTTPStatusError as exc:
             blocked_status = exc.response.status_code
-            if (exc.response.headers.get("cf-mitigated") or "").lower() == "challenge":
+            headers = exc.response.headers
+            cloudflare = (
+                (headers.get("cf-mitigated") or "").lower() == "challenge"
+                or "cloudflare" in (headers.get("server") or "").lower()
+                or bool(headers.get("cf-ray"))
+            )
+            if cloudflare:
                 warnings.append(
-                    "Cloudflare challenge detectado antes do player; a origem não expôs a mídia para este servidor."
+                    "Cloudflare/anti-bot bloqueou o acesso antes do player; "
+                    "o Iris não recebeu a mídia desta origem."
                 )
             else:
                 warnings.append(
