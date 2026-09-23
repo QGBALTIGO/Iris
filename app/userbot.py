@@ -261,6 +261,7 @@ class UserbotManager:
         caption: str | None = None,
         as_video: bool = False,
         progress_callback=None,
+        parse_mode=None,
     ):
         if not bot_username:
             raise RuntimeError("O bot não possui username público.")
