@@ -14,6 +14,7 @@ from app.benchmark import run_admin_benchmark
 from app.channel_backfill import channel_backfill
 from app.content import chapter_pages, content_images, content_summary
 from app.delivery import DeliveryManager, build_pdf, build_zip, human_bytes, parse_relay_payload
+from app.editorial import format_video_caption
 from app.jobs import JobStore
 from app.large_video_smoke import run_large_video_smoke
 from app.models import AnalyzeResult, DownloadJob, JobState, MediaResource, ResourceType
@@ -146,12 +147,15 @@ def upload_progress_text(name: str, sent: int, total: int, speed_bps: float = 0.
 
 def delivery_caption(resource: MediaResource | None, *, as_video: bool = False) -> str:
     title = None
+    editorial = None
     if resource is not None:
         title = resource.title or resource.metadata.get("page_title")
+        editorial = resource.metadata.get("editorial")
     title = title or ("Vídeo" if as_video else "Arquivo")
-    icon = "🎬" if as_video else "📦"
+    if as_video:
+        return format_video_caption(str(title), editorial)
     clean_title = " ".join(str(title).replace("\n", " ").split())[:220]
-    return f"{icon} {clean_title}"
+    return f"📦 {clean_title}"
 
 
 def _manifest_resources(result: AnalyzeResult) -> list[MediaResource]:
