@@ -291,6 +291,49 @@ class UserbotManager:
                 progress_callback=progress_callback,
             )
 
+    async def repair_delivery_channel_captions(
+        self,
+        invite_url: str,
+        *,
+        limit: int = 1000,
+    ) -> dict[str, int]:
+        async with self._lock:
+            client = await self.client()
+            target = await self.resolve_delivery_target(invite_url)
+            scanned = 0
+            edited = 0
+
+            async for message in client.iter_messages(target, limit=limit):
+                scanned += 1
+                text = getattr(message, "message", None) or ""
+                if not text.startswith("🎬"):
+                    continue
+
+                cleaned = (
+                    text.replace("<b>", "")
+                    .replace("</b>", "")
+                    .replace("✨ IRIS", "")
+                    .replace("✨ <i>IRIS</i>", "")
+                    .strip()
+                )
+                while "\n\n\n" in cleaned:
+                    cleaned = cleaned.replace("\n\n\n", "\n\n")
+                cleaned = cleaned.rstrip()
+
+                if cleaned == text:
+                    continue
+
+                await client.edit_message(
+                    target,
+                    message.id,
+                    cleaned,
+                    parse_mode=None,
+                )
+                edited += 1
+                await asyncio.sleep(0.12)
+
+            return {"scanned": scanned, "edited": edited}
+
     async def delete_from_bot_chat(self, bot_username: str, message_id: int) -> None:
         try:
             client = await self.client()
