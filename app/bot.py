@@ -8,6 +8,7 @@ import uuid
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
+from app.admin_test_suite import run_admin_test_suite
 from app.analyzer import Analyzer
 from app.benchmark import run_admin_benchmark
 from app.content import chapter_pages, content_images, content_summary
@@ -410,6 +411,19 @@ async def run_bot() -> None:
             await msg.edit_text(
                 f"⚠️ <b>Diagnóstico falhou</b>\n\n<code>{_safe(str(exc), 220)}</code>"
             )
+
+    async def admin_tests(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not _is_admin(update.effective_user.id if update.effective_user else None):
+            return
+        await update.effective_message.reply_text(
+            "🧪 <b>Bateria completa iniciada</b>\n\n"
+            "Vou testar motores, manifestos, navegador e sites reais. "
+            "Os resultados serão enviados aqui durante a execução."
+        )
+        asyncio.create_task(
+            run_admin_test_suite(application.bot, update.effective_chat.id),
+            name="iris-admin-full-tests",
+        )
 
     async def admin_clean(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not _is_admin(update.effective_user.id if update.effective_user else None):
@@ -1142,6 +1156,7 @@ async def run_bot() -> None:
     application.add_handler(CommandHandler("jobs", admin_jobs))
     application.add_handler(CommandHandler("conta06", admin_userbot))
     application.add_handler(CommandHandler("diagnostico", admin_diag))
+    application.add_handler(CommandHandler("testes", admin_tests))
     application.add_handler(CommandHandler("limpar", admin_clean))
     application.add_handler(CommandHandler("fila", admin_queue))
     application.add_handler(CommandHandler("retomar", admin_queue))
@@ -1178,6 +1193,7 @@ async def run_bot() -> None:
                 BotCommand("downloads", "Downloads recentes"),
                 BotCommand("conta06", "Conectar a Conta 06"),
                 BotCommand("diagnostico", "Testar entregas"),
+                BotCommand("testes", "Bateria completa do Iris"),
                 BotCommand("limpar", "Limpar temporários"),
                 BotCommand("fila", "Fila persistente do site"),
                 BotCommand("retomar", "Continuar fila de onde parou"),
@@ -1262,6 +1278,23 @@ async def run_bot() -> None:
                     f"<code>{_safe(str(exc), 300)}</code>",
                 )
         asyncio.create_task(_one_shot_once(), name="iris-one-shot")
+
+    if settings.run_admin_test_suite and settings.admin_id:
+        async def _admin_tests_once():
+            await asyncio.sleep(6)
+            try:
+                await run_admin_test_suite(application.bot, settings.admin_id)
+            except Exception as exc:
+                print(f"IRIS_ADMIN_TESTS_ERROR {type(exc).__name__}: {exc}", flush=True)
+                try:
+                    await application.bot.send_message(
+                        settings.admin_id,
+                        "❌ <b>Bateria automática falhou</b>\n\n"
+                        f"<code>{_safe(str(exc), 350)}</code>",
+                    )
+                except Exception:
+                    pass
+        asyncio.create_task(_admin_tests_once(), name="iris-admin-auto-tests")
 
     if settings.run_benchmark and settings.admin_id:
         async def _benchmark_once():
