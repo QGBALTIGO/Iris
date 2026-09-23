@@ -550,17 +550,36 @@ async def run_bot() -> None:
                 )
             ]
         ])
-        cached_start_video = Path("/data/iris_start_video.mp4")
-        video_source = (
-            cached_start_video
-            if cached_start_video.exists()
-            else settings.start_video_file_id
-        )
-        await message.reply_video(
-            video=video_source,
-            caption=caption,
+        saved_id_path = Path("/data/iris_start_video_file_id.txt")
+        saved_file_id = None
+        try:
+            if saved_id_path.exists():
+                saved_file_id = saved_id_path.read_text(encoding="utf-8").strip() or None
+        except OSError:
+            saved_file_id = None
+
+        video_file_id = saved_file_id or settings.start_video_file_id
+        if video_file_id:
+            try:
+                await message.reply_video(
+                    video=video_file_id,
+                    caption=caption,
+                    reply_markup=markup,
+                    supports_streaming=True,
+                )
+                return
+            except Exception as exc:
+                print(
+                    f"IRIS_START_VIDEO_SEND_ERROR {type(exc).__name__}: {str(exc)[:240]}",
+                    flush=True,
+                )
+
+        # Never fall back to the CHelpBot thumbnail: it is only the video's
+        # poster image. Until the Iris-specific video file_id is saved, keep
+        # the subscription CTA functional without sending the wrong media.
+        await message.reply_text(
+            caption,
             reply_markup=markup,
-            supports_streaming=True,
         )
 
     async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -984,6 +1003,27 @@ async def run_bot() -> None:
 
         if not _can_use(uid):
             return
+
+        if (
+            _is_admin(uid)
+            and message.video
+            and (message.caption or "").strip().casefold() in {"#startvideo", "startvideo"}
+        ):
+            saved_id_path = Path("/data/iris_start_video_file_id.txt")
+            saved_id_path.parent.mkdir(parents=True, exist_ok=True)
+            saved_id_path.write_text(message.video.file_id, encoding="utf-8")
+            await message.reply_text(
+                "✅ <b>Vídeo do /start salvo.</b>\n\n"
+                "A partir de agora o /start usa este vídeo."
+            )
+            print(
+                "IRIS_START_VIDEO_SAVED "
+                f"file_id={message.video.file_id[:16]}... "
+                f"unique_id={message.video.file_unique_id}",
+                flush=True,
+            )
+            return
+
         obj = (
             message.video
             or message.video_note
@@ -1520,46 +1560,6 @@ async def run_bot() -> None:
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
 
     await application.initialize()
-
-    try:
-        start_file = await application.bot.get_file(settings.start_video_file_id)
-        print(
-            "IRIS_START_VIDEO_OK "
-            f"file_id={settings.start_video_file_id[:16]}... "
-            f"path={getattr(start_file, 'file_path', None)}",
-            flush=True,
-        )
-    except Exception as exc:
-        print(
-            f"IRIS_START_VIDEO_ERROR {type(exc).__name__}: {str(exc)[:300]}",
-            flush=True,
-        )
-        try:
-            from telethon import utils as telethon_utils  # type: ignore
-
-            cached_start_video = Path("/data/iris_start_video.mp4")
-            if not cached_start_video.exists():
-                media = telethon_utils.resolve_bot_file_id(settings.start_video_file_id)
-                if media is None:
-                    raise RuntimeError("Telethon não reconheceu o file_id do vídeo")
-                client = await userbot.client()
-                downloaded = await client.download_media(
-                    media,
-                    file=str(cached_start_video),
-                )
-                if not downloaded or not cached_start_video.exists():
-                    raise RuntimeError("MTProto não conseguiu baixar o vídeo")
-            print(
-                f"IRIS_START_VIDEO_CACHE_OK path={cached_start_video} "
-                f"bytes={cached_start_video.stat().st_size}",
-                flush=True,
-            )
-        except Exception as cache_exc:
-            print(
-                f"IRIS_START_VIDEO_CACHE_ERROR {type(cache_exc).__name__}: "
-                f"{str(cache_exc)[:300]}",
-                flush=True,
-            )
 
     try:
         await application.bot.set_my_commands(
