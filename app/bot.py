@@ -145,17 +145,11 @@ def upload_progress_text(name: str, sent: int, total: int, speed_bps: float = 0.
 
 def delivery_caption(resource: MediaResource | None, *, as_video: bool = False) -> str:
     title = None
-    quality = None
     if resource is not None:
         title = resource.title or resource.metadata.get("page_title")
-        quality = resource.quality or (f"{resource.height}p" if resource.height else None)
     title = title or ("Vídeo" if as_video else "Arquivo")
     icon = "🎬" if as_video else "📦"
-    lines = [f"{icon} <b>{_safe(str(title), 220)}</b>"]
-    if quality:
-        lines.append(f"📺 <b>{_safe(str(quality), 30)}</b>")
-    lines.extend(["", "✨ <i>IRIS</i>"])
-    return "\n".join(lines)
+    return f"{icon} <b>{_safe(str(title), 220)}</b>"
 
 
 def _manifest_resources(result: AnalyzeResult) -> list[MediaResource]:
