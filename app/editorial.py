@@ -163,7 +163,14 @@ def hashtag(value: str) -> str:
     value = _SPACE.sub("_", value)
     value = _BAD_HASH.sub("_", value)
     value = re.sub(r"_+", "_", value).strip("_")
-    return f"#{value}" if value else ""
+    if not value:
+        return ""
+    parts = []
+    for part in value.split("_"):
+        if part.islower() and part:
+            part = part[0].upper() + part[1:]
+        parts.append(part)
+    return "#" + "_".join(parts)
 
 
 def format_editorial_block(meta: dict | EditorialMetadata | None, *, max_chars: int = 760) -> str:
