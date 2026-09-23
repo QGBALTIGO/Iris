@@ -78,3 +78,40 @@ def test_video_caption_keeps_editorial_block():
     assert "🎬 Título do vídeo" not in caption
     assert "<blockquote expandable>" in caption
     assert "\n\n<blockquote expandable>" in caption
+
+
+def test_tubepussy_shorts_taxonomy_is_extracted_from_short_links():
+    html = """
+    <html><head><title>Mostrando os peitos na frente do espelho</title></head><body>
+      <div class="short-meta">
+        <a href="/shorts/shorts-porn/">#Shorts Porn</a>
+        <a href="/shorts/big-boobs/">#Big boobs</a>
+        <a href="/shorts/amateur-porn/">#Amateur porn</a>
+        <a href="/shorts/young/">#Young</a>
+      </div>
+      <h1>Mostrando os peitos na frente do espelho</h1>
+      <section class="recommended">
+        <a href="/shorts/amateur/">#Amateur</a>
+        <a href="/shorts/99999/">Outro vídeo</a>
+      </section>
+    </body></html>
+    """
+    meta = extract_editorial_metadata(
+        html,
+        "https://tubepussy.org/shorts/12549/",
+    )
+    assert meta.tags == [
+        "Shorts Porn",
+        "Big boobs",
+        "Amateur porn",
+        "Young",
+    ]
+    caption = format_video_caption(meta.title, meta)
+    assert caption.startswith(
+        "<b>🚫 #Mostrando_Os_Peitos_Na_Frente_Do_Espelho</b>"
+    )
+    assert "#Shorts_Porn" in caption
+    assert "#Big_Boobs" in caption
+    assert "#Amateur_Porn" in caption
+    assert "#Young" in caption
+    assert "#Amateur" not in caption
