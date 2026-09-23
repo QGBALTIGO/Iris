@@ -83,15 +83,21 @@ def test_video_caption_keeps_editorial_block():
 def test_tubepussy_shorts_taxonomy_is_extracted_from_short_links():
     html = """
     <html><head><title>Mostrando os peitos na frente do espelho</title></head><body>
-      <div class="short-meta">
-        <a href="/shorts/shorts-porn/">#Shorts Porn</a>
-        <a href="/shorts/big-boobs/">#Big boobs</a>
-        <a href="/shorts/amateur-porn/">#Amateur porn</a>
-        <a href="/shorts/young/">#Young</a>
-      </div>
       <h1>Mostrando os peitos na frente do espelho</h1>
+      <div id="shortsInfoPanel" class="shorts-info-panel">
+        <div class="sp-tags">
+          <a href="/shorts/shorts-porn/">#Shorts Porn</a>
+          <a href="/shorts/big-boobs/">#Big boobs</a>
+          <a href="/shorts/amateur-porn/">#Amateur porn</a>
+          <a href="/shorts/young/">#Young</a>
+        </div>
+      </div>
       <section class="recommended">
-        <a href="/shorts/amateur/">#Amateur</a>
+        <div class="video-data">
+          <div class="tags-container">
+            <a class="video-tag" href="/shorts/amateur/">#Amateur</a>
+          </div>
+        </div>
         <a href="/shorts/99999/">Outro vídeo</a>
       </section>
     </body></html>
