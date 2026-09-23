@@ -19,6 +19,7 @@ from app.one_shot import run_one_shot
 from app.mtproto_speed_smoke import run_mtproto_speed_smoke
 from app.selftest import run_telegram_selftest
 from app.settings import settings
+from app.service_registry import detect_service
 from app.site_queue import site_queue
 from app.source_speed_smoke import run_source_speed_smoke
 from app.userbot import userbot
@@ -200,11 +201,31 @@ def deliverable_paths(job: DownloadJob, limit_bytes: int) -> tuple[list[Path], l
 def _analysis_text(result: AnalyzeResult, elapsed: float | None = None) -> str:
     stats = content_summary(result)
     title = _safe(result.title or _domain(result.final_url) or result.final_url, 110)
+    profile = detect_service(result.final_url)
+    manifests = [
+        r for r in result.resources
+        if r.type == ResourceType.PLAYLIST
+    ]
+    qualities = {
+        v.label
+        for r in manifests
+        for v in r.variants
+        if v.label
+    }
+    audio_tracks = sum(len(r.metadata.get("audio_tracks") or []) for r in manifests)
+    subtitle_tracks = sum(len(r.metadata.get("subtitle_tracks") or []) for r in manifests)
+    drm_systems = sorted({
+        system
+        for r in result.resources
+        for system in (r.metadata.get("drm_systems") or [])
+        if isinstance(system, str)
+    })
     lines = [
         "🔎 <b>Análise concluída</b>",
         "",
         f"🎯 <b>{title}</b>",
         f"🌐 <code>{_safe(_domain(result.final_url), 80)}</code>",
+        f"🧩 Serviço: <b>{_safe(profile.label, 60)}</b>",
         "",
     ]
     if stats["videos"]:
@@ -219,8 +240,15 @@ def _analysis_text(result: AnalyzeResult, elapsed: float | None = None) -> str:
         lines.append(f"🖼️ Imagens úteis: <b>{stats['images']}</b>")
     if stats["files"]:
         lines.append(f"📦 Arquivos: <b>{stats['files']}</b>")
+    if qualities:
+        lines.append(f"📺 Qualidades: <b>{len(qualities)}</b> • {_safe(', '.join(sorted(qualities)[:6]), 90)}")
+    if audio_tracks:
+        lines.append(f"🎚️ Faixas de áudio: <b>{audio_tracks}</b>")
+    if subtitle_tracks:
+        lines.append(f"💬 Legendas: <b>{subtitle_tracks}</b>")
     if stats["drm"]:
-        lines.append(f"🔒 Mídia protegida: <b>{stats['drm']}</b>")
+        systems = f" • {_safe(', '.join(drm_systems), 80)}" if drm_systems else ""
+        lines.append(f"🔒 Mídia protegida: <b>{stats['drm']}</b>{systems}")
     if not any(stats.values()):
         lines.append("🤷 Nenhum recurso útil encontrado.")
     if elapsed is not None:
