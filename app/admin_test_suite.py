@@ -18,7 +18,7 @@ from app.service_registry import detect_service
 from app.settings import settings
 from app.userbot import userbot
 from app.video_candidates import download_first_valid_video
-from app.video_tools import probe_video
+from app.video_tools import normalize_video_mp4, probe_video
 
 
 _LOCK = asyncio.Lock()
@@ -180,21 +180,180 @@ async def _synthetic_drm_check() -> str:
     return "FairPlay + Widevine reconhecidos"
 
 
-async def _synthetic_2000() -> str:
+async def _synthetic_10000() -> str:
     from app.classifier import classify_resource
     from app.dedup import deduplicate
 
     exts = ["mp4", "webm", "mp3", "jpg", "png", "pdf", "zip", "srt", "m3u8", "mpd"]
     rows: list[MediaResource] = []
-    for i in range(2000):
+    for i in range(10_000):
         ext = exts[i % len(exts)]
-        url = f"https://cdn.example.test/{i % 53}/asset-{i}.{ext}?v={i}"
+        url = f"https://cdn.example.test/{i % 211}/asset-{i}.{ext}?v={i}"
         rows.append(MediaResource(url=url, type=classify_resource(url)))
-    unique = deduplicate(rows + rows[:500])
-    if len(unique) != 2000:
+    unique = deduplicate(rows + rows[:2_500])
+    if len(unique) != 10_000:
         raise AssertionError(f"dedup={len(unique)}")
-    return "2.000 recursos + 500 duplicatas validados"
+    return "10.000 recursos + 2.500 duplicatas validados"
 
+
+
+async def _tool_versions() -> str:
+    commands = {
+        "ffmpeg": ["ffmpeg", "-version"],
+        "ffprobe": ["ffprobe", "-version"],
+        "aria2": ["aria2c", "--version"],
+        "yt-dlp": ["yt-dlp", "--version"],
+        "N_m3u8DL-RE": ["N_m3u8DL-RE", "--version"],
+        "streamlink": ["streamlink", "--version"],
+        "mkvmerge": ["mkvmerge", "--version"],
+    }
+    rows = []
+    for label, cmd in commands.items():
+        if not shutil.which(cmd[0]):
+            rows.append(f"{label}=ausente")
+            continue
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        out, _ = await proc.communicate()
+        first = (out.decode(errors="replace").strip().splitlines() or ["?"])[0]
+        rows.append(f"{label}={first[:100]}")
+    return " | ".join(rows)
+
+
+async def _service_registry_check() -> str:
+    samples = {
+        "crunchyroll": "https://www.crunchyroll.com/watch/x",
+        "netflix": "https://www.netflix.com/watch/1",
+        "primevideo": "https://www.primevideo.com/detail/x",
+        "disneyplus": "https://www.disneyplus.com/video/x",
+        "max": "https://play.max.com/video/x",
+        "paramountplus": "https://www.paramountplus.com/shows/x",
+        "appletv": "https://tv.apple.com/br/movie/x",
+        "globoplay": "https://globoplay.globo.com/v/x",
+        "hidive": "https://www.hidive.com/video/x",
+        "adn": "https://animationdigitalnetwork.fr/video/x",
+        "animeonlinecc": "https://animesonlinecc.to/episodio/x/",
+        "tubepussy": "https://tubepussy.org/x/",
+        "xvideosputaria": "https://xvideosputaria.com/x/",
+        "mangaplus": "https://mangaplus.shueisha.co.jp/viewer/1",
+        "generic": "https://example.com/video",
+    }
+    mismatches = []
+    for expected, url in samples.items():
+        got = detect_service(url).key
+        if got != expected:
+            mismatches.append(f"{expected}->{got}")
+    if mismatches:
+        raise AssertionError(", ".join(mismatches))
+    return f"{len(samples)} perfis de serviço reconhecidos"
+
+
+async def _engine_matrix_check() -> str:
+    engine = DownloadEngine()
+    samples = [
+        (MediaResource(url="https://cdn.example/video.mp4", type=ResourceType.VIDEO), {"aria2", "httpx"}),
+        (MediaResource(url="https://cdn.example/master.m3u8", type=ResourceType.PLAYLIST), {"n_m3u8dl-re", "yt-dlp", "unsupported-stream"}),
+        (MediaResource(url="https://cdn.example/cover.jpg", type=ResourceType.IMAGE), {"httpx"}),
+    ]
+    rows = []
+    for resource, expected in samples:
+        selected = engine.choose_engine(resource)
+        if selected not in expected:
+            raise AssertionError(f"{resource.type}: {selected}")
+        rows.append(f"{resource.type.value}={selected}")
+    return " • ".join(rows)
+
+
+async def _candidate_filter_check() -> str:
+    from app.video_candidates import video_candidate_rank
+    from urllib.parse import urlsplit
+
+    rows = [
+        MediaResource(
+            url="https://cdn.example/hls/video0.ts",
+            type=ResourceType.VIDEO,
+            source="browser:network",
+            metadata={"hls_segment": True},
+        ),
+        MediaResource(
+            url="https://cdn.example/master.m3u8",
+            type=ResourceType.PLAYLIST,
+            source="browser:network",
+        ),
+        MediaResource(
+            url="https://cdn.example/video.mp4",
+            type=ResourceType.VIDEO,
+            source="browser:network",
+        ),
+    ]
+    usable = [
+        r for r in rows
+        if not r.metadata.get("hls_segment")
+        and not (r.source.startswith("browser:") and urlsplit(r.url).path.lower().endswith(".ts"))
+    ]
+    usable.sort(key=video_candidate_rank)
+    if [urlsplit(r.url).path for r in usable] != ["/video.mp4", "/master.m3u8"]:
+        raise AssertionError([r.url for r in usable])
+    return "segmento .ts descartado; MP4 > playlist"
+
+
+async def _video_normalization_check() -> str:
+    root = Path("/data/iris-test-temp") if Path("/data").exists() else settings.downloads_dir / "test-temp"
+    root.mkdir(parents=True, exist_ok=True)
+    source = root / "odd-source.mkv"
+    output = None
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ffmpeg",
+            "-hide_banner", "-loglevel", "error",
+            "-f", "lavfi", "-i", "testsrc=size=405x719:rate=17",
+            "-f", "lavfi", "-i", "sine=frequency=500:sample_rate=32000",
+            "-t", "1.2",
+            "-c:v", "ffv1",
+            "-pix_fmt", "yuv444p",
+            "-c:a", "pcm_s16le",
+            "-y", str(source),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            raise RuntimeError(stderr.decode(errors="replace")[-500:])
+        output, generated = await normalize_video_mp4(source)
+        info = await probe_video(output)
+        if output.suffix.lower() != ".mp4":
+            raise AssertionError(output)
+        if info.width % 2 or info.height % 2:
+            raise AssertionError(f"{info.width}x{info.height}")
+        if info.audio_codec != "aac":
+            raise AssertionError(info.audio_codec)
+        if info.codec not in {"h264", "mpeg4"}:
+            raise AssertionError(info.codec)
+        return f"{info.codec}/aac • {info.width}x{info.height} • {output.stat().st_size/1024:.0f} KB"
+    finally:
+        source.unlink(missing_ok=True)
+        if output and output != source:
+            output.unlink(missing_ok=True)
+
+
+async def _download_speed_check(size_mb: int, url: str) -> str:
+    started = time.monotonic()
+    path = await DownloadEngine().download(
+        MediaResource(url=url, type=ResourceType.OTHER),
+        filename=f"speed-{size_mb}mb.bin",
+    )
+    try:
+        elapsed = max(time.monotonic() - started, 0.001)
+        size = path.stat().st_size
+        mib_s = size / 1024 / 1024 / elapsed
+        if size < size_mb * 700_000:
+            raise AssertionError(f"arquivo curto: {size}")
+        return f"{size/1024/1024:.1f} MB em {elapsed:.2f}s • {mib_s:.1f} MB/s"
+    finally:
+        path.unlink(missing_ok=True)
 
 async def run_admin_test_suite(bot, admin_id: int) -> list[Check]:
     if _LOCK.locked():
@@ -228,8 +387,13 @@ async def run_admin_test_suite(bot, admin_id: int) -> list[Check]:
             f"yt-dlp={_tool('yt-dlp')} N_m3u8DL-RE={_tool('N_m3u8DL-RE')} "
             f"streamlink={_tool('streamlink')} mkvmerge={_tool('mkvmerge')}"
         )))
+        await add("Versões dos motores", _tool_versions)
+        await add("Registro de serviços", _service_registry_check)
+        await add("Matriz de motores", _engine_matrix_check)
+        await add("Filtro de candidatos", _candidate_filter_check)
+        await add("Normalização MP4 difícil", _video_normalization_check)
         await add("Conta 06", _userbot_check)
-        await add("Stress sintético", _synthetic_2000)
+        await add("Stress sintético 10k", _synthetic_10000)
         await add("Faixas HLS/DASH", _synthetic_manifest_check)
         await add("Classificação DRM", _synthetic_drm_check)
 
@@ -239,6 +403,20 @@ async def run_admin_test_suite(bot, admin_id: int) -> list[Check]:
                 "jpeg",
                 MediaResource(url="https://httpbin.org/image/jpeg", type=ResourceType.IMAGE),
                 10_000,
+            ),
+        )
+        await add(
+            "Download 8 MB",
+            lambda: _download_speed_check(
+                8,
+                "https://media.githubusercontent.com/media/inventer-dev/speed-test-files/main/8MB.bin",
+            ),
+        )
+        await add(
+            "Download 32 MB",
+            lambda: _download_speed_check(
+                32,
+                "https://media.githubusercontent.com/media/inventer-dev/speed-test-files/main/32MB.bin",
             ),
         )
         await add(
@@ -348,4 +526,21 @@ async def run_admin_test_suite(bot, admin_id: int) -> list[Check]:
             lines.append(f"{icon} {check.name} • {check.seconds:.1f}s")
         lines.extend(["", f"💾 Relatório: <code>{report_path}</code>"])
         await _send_chunks(bot, admin_id, "\n".join(lines))
+        try:
+            from telegram import InputFile
+            with report_path.open("rb") as fh:
+                await bot.send_document(
+                    chat_id=admin_id,
+                    document=InputFile(fh, filename=report_path.name),
+                    caption=(
+                        f"📎 IRIS • relatório detalhado\n"
+                        f"✅ {passed} • ❌ {failed} • 🧪 {len(checks)}"
+                    ),
+                )
+        except Exception as exc:
+            await bot.send_message(
+                admin_id,
+                f"⚠️ Não consegui anexar o relatório: <code>{html.escape(str(exc)[:250])}</code>",
+                parse_mode="HTML",
+            )
         return checks
