@@ -1,5 +1,5 @@
 name: Pobreflix full HLS download
-# retry dynamic frame player probing
+# retry disguised HLS playlist classification
 
 on:
   push:
