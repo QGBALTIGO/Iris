@@ -148,3 +148,7 @@ def detect_service(url: str) -> ServiceProfile:
         hosts=(),
         strategies=("http", "html", "yt-dlp", "browser", "manifest"),
     )
+
+
+def list_services() -> list[ServiceProfile]:
+    return list(_PROFILES)
