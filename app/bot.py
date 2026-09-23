@@ -28,6 +28,7 @@ from app.video_smoke import run_native_video_smoke
 from app.video_candidates import download_first_valid_video
 
 _ANALYSES: dict[str, AnalyzeResult] = {}
+_TRACK_PREFS: dict[tuple[str, int], dict[str, object]] = {}
 _AUTH_STAGE: str | None = None
 
 analyzer = Analyzer()
@@ -157,6 +158,25 @@ def delivery_caption(resource: MediaResource | None, *, as_video: bool = False) 
     return "\n".join(lines)
 
 
+def _manifest_resources(result: AnalyzeResult) -> list[MediaResource]:
+    return [
+        r for r in result.resources
+        if r.type == ResourceType.PLAYLIST
+    ]
+
+
+def _track_pref(key: str, manifest_index: int) -> dict[str, object]:
+    return _TRACK_PREFS.setdefault(
+        (key, manifest_index),
+        {
+            "height": None,
+            "audio": None,
+            "subtitle": None,
+            "container": "mp4",
+        },
+    )
+
+
 def manifest_tracks_text(result: AnalyzeResult) -> str:
     manifests = [r for r in result.resources if r.type == ResourceType.PLAYLIST]
     qualities = []
@@ -207,6 +227,144 @@ def manifest_tracks_text(result: AnalyzeResult) -> str:
     if not qualities and not audio and not subtitles:
         lines.append("Nenhuma faixa detalhada disponível neste manifesto.")
     return "\n".join(lines)
+
+
+def tracks_markup(result: AnalyzeResult, key: str, manifest_index: int = 0):
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+    manifests = _manifest_resources(result)
+    if not manifests:
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton("↩️ Voltar", callback_data=f"home:x:{key}:0")]
+        ])
+
+    manifest_index = max(0, min(manifest_index, len(manifests) - 1))
+    resource = manifests[manifest_index]
+    pref = _track_pref(key, manifest_index)
+    rows = []
+
+    heights = []
+    for variant in resource.variants:
+        height = variant.height
+        if height and height not in heights:
+            heights.append(height)
+    heights.sort(reverse=True)
+    if heights:
+        qrow = []
+        for height in heights[:5]:
+            selected = "✓ " if pref.get("height") == height else ""
+            qrow.append(
+                InlineKeyboardButton(
+                    f"{selected}{height}p",
+                    callback_data=f"trkq:{key}:{manifest_index}:{height}",
+                )
+            )
+        rows.append(qrow)
+
+    audio_tracks = resource.metadata.get("audio_tracks") or []
+    if audio_tracks:
+        arow = []
+        for idx, item in enumerate(audio_tracks[:5]):
+            lang = item.get("language") or item.get("name") or f"A{idx+1}"
+            selected = "✓ " if pref.get("audio") == lang else ""
+            arow.append(
+                InlineKeyboardButton(
+                    f"🎵 {selected}{str(lang)[:12]}",
+                    callback_data=f"trka:{key}:{manifest_index}:{idx}",
+                )
+            )
+        rows.append(arow)
+
+    subtitle_tracks = resource.metadata.get("subtitle_tracks") or []
+    if subtitle_tracks:
+        srow = []
+        for idx, item in enumerate(subtitle_tracks[:5]):
+            lang = item.get("language") or item.get("name") or f"S{idx+1}"
+            selected = "✓ " if pref.get("subtitle") == lang else ""
+            srow.append(
+                InlineKeyboardButton(
+                    f"💬 {selected}{str(lang)[:12]}",
+                    callback_data=f"trks:{key}:{manifest_index}:{idx}",
+                )
+            )
+        rows.append(srow)
+
+    container = str(pref.get("container") or "mp4")
+    rows.append([
+        InlineKeyboardButton(
+            f"{'✓ ' if container == 'mp4' else ''}MP4",
+            callback_data=f"trkc:{key}:{manifest_index}:mp4",
+        ),
+        InlineKeyboardButton(
+            f"{'✓ ' if container == 'mkv' else ''}MKV",
+            callback_data=f"trkc:{key}:{manifest_index}:mkv",
+        ),
+    ])
+
+    if resource.drm:
+        rows.append([
+            InlineKeyboardButton("🔒 DRM detectado", callback_data="noop")
+        ])
+    else:
+        rows.append([
+            InlineKeyboardButton(
+                "⬇️ Baixar com estas faixas",
+                callback_data=f"trkdl:{key}:{manifest_index}",
+            )
+        ])
+
+    if len(manifests) > 1:
+        nav = []
+        if manifest_index > 0:
+            nav.append(
+                InlineKeyboardButton(
+                    "‹ Manifesto",
+                    callback_data=f"tracks:{key}:{manifest_index-1}",
+                )
+            )
+        if manifest_index + 1 < len(manifests):
+            nav.append(
+                InlineKeyboardButton(
+                    "Manifesto ›",
+                    callback_data=f"tracks:{key}:{manifest_index+1}",
+                )
+            )
+        if nav:
+            rows.append(nav)
+
+    rows.append([
+        InlineKeyboardButton("↩️ Voltar", callback_data=f"home:x:{key}:0")
+    ])
+    return InlineKeyboardMarkup(rows)
+
+
+def track_preferences_text(result: AnalyzeResult, key: str, manifest_index: int = 0) -> str:
+    manifests = _manifest_resources(result)
+    if not manifests:
+        return manifest_tracks_text(result)
+    manifest_index = max(0, min(manifest_index, len(manifests) - 1))
+    resource = manifests[manifest_index]
+    pref = _track_pref(key, manifest_index)
+
+    base = manifest_tracks_text(
+        AnalyzeResult(
+            url=result.url,
+            final_url=result.final_url,
+            title=result.title,
+            content_type=result.content_type,
+            resources=[resource],
+            warnings=result.warnings,
+        )
+    )
+    selected = [
+        "",
+        "⚙️ <b>Seleção atual</b>",
+        f"📺 Qualidade: <b>{pref.get('height') or 'melhor disponível'}</b>",
+        f"🎵 Áudio: <b>{_safe(str(pref.get('audio') or 'automático'), 40)}</b>",
+        f"💬 Legenda: <b>{_safe(str(pref.get('subtitle') or 'nenhuma/automática'), 40)}</b>",
+        f"📦 Container: <b>{str(pref.get('container') or 'mp4').upper()}</b>",
+    ]
+    return base + "\n" + "\n".join(selected)
 
 
 def queue_status_text() -> str:
@@ -1149,6 +1307,9 @@ async def run_bot() -> None:
         parts = (query.data or "").split(":")
         action = parts[0] if parts else ""
 
+        if action == "noop":
+            return
+
         if action == "cancel" and len(parts) >= 2:
             jobs.cancel(parts[1])
             job = jobs.get(parts[1])
@@ -1165,16 +1326,79 @@ async def run_bot() -> None:
 
         if action == "tracks" and len(parts) >= 2:
             key = parts[1]
+            manifest_index = int(parts[2]) if len(parts) >= 3 else 0
             result = _ANALYSES.get(key)
             if not result:
                 await query.edit_message_text("⌛ <b>Análise expirada.</b>\n\nEnvie a URL novamente.")
                 return
             await query.edit_message_text(
-                manifest_tracks_text(result),
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("↩️ Voltar", callback_data=f"home:x:{key}:0")]
-                ]),
+                track_preferences_text(result, key, manifest_index),
+                reply_markup=tracks_markup(result, key, manifest_index),
             )
+            return
+
+        if action in {"trkq", "trka", "trks", "trkc"} and len(parts) >= 4:
+            key = parts[1]
+            manifest_index = int(parts[2])
+            result = _ANALYSES.get(key)
+            if not result:
+                await query.edit_message_text("⌛ <b>Análise expirada.</b>\n\nEnvie a URL novamente.")
+                return
+            manifests = _manifest_resources(result)
+            if not (0 <= manifest_index < len(manifests)):
+                return
+            resource = manifests[manifest_index]
+            pref = _track_pref(key, manifest_index)
+
+            if action == "trkq":
+                pref["height"] = int(parts[3])
+            elif action == "trka":
+                idx = int(parts[3])
+                tracks = resource.metadata.get("audio_tracks") or []
+                if 0 <= idx < len(tracks):
+                    item = tracks[idx]
+                    pref["audio"] = item.get("language") or item.get("name")
+            elif action == "trks":
+                idx = int(parts[3])
+                tracks = resource.metadata.get("subtitle_tracks") or []
+                if 0 <= idx < len(tracks):
+                    item = tracks[idx]
+                    pref["subtitle"] = item.get("language") or item.get("name")
+            elif action == "trkc":
+                pref["container"] = "mkv" if parts[3] == "mkv" else "mp4"
+
+            await query.edit_message_text(
+                track_preferences_text(result, key, manifest_index),
+                reply_markup=tracks_markup(result, key, manifest_index),
+            )
+            return
+
+        if action == "trkdl" and len(parts) >= 3:
+            key = parts[1]
+            manifest_index = int(parts[2])
+            result = _ANALYSES.get(key)
+            if not result:
+                await query.edit_message_text("⌛ <b>Análise expirada.</b>\n\nEnvie a URL novamente.")
+                return
+            manifests = _manifest_resources(result)
+            if not (0 <= manifest_index < len(manifests)):
+                return
+            resource = manifests[manifest_index]
+            if resource.drm:
+                await query.edit_message_text(
+                    "🔒 <b>DRM detectado</b>\n\n"
+                    "As faixas podem ser inspecionadas, mas o Iris não tenta descriptografar esse conteúdo."
+                )
+                return
+
+            selected = resource.model_copy(deep=True)
+            pref = _track_pref(key, manifest_index)
+            selected.metadata["preferred_height"] = pref.get("height")
+            selected.metadata["preferred_audio"] = pref.get("audio")
+            selected.metadata["preferred_subtitle"] = pref.get("subtitle")
+            selected.metadata["container"] = pref.get("container") or "mp4"
+            mode = "file" if selected.metadata["container"] == "mkv" else "video"
+            await launch_download(query, [selected], delivery_mode=mode)
             return
 
         if action == "deep" and len(parts) >= 2:
