@@ -121,3 +121,56 @@ def test_tubepussy_shorts_taxonomy_is_extracted_from_short_links():
     assert "#Amateur_Porn" in caption
     assert "#Young" in caption
     assert " / #Amateur / " not in caption
+
+
+def test_xvideosputaria_current_post_taxonomies_ignore_global_menu():
+    html = """
+    <html><head><title>Vídeo teste - Xvideos Putaria</title></head><body>
+      <nav>
+        <a href="/videos/porno-longo-qt/">Pornô Longo</a>
+        <a href="/videos/famosas-hm/">Famosas</a>
+        <a href="/videos/lesbicas-chd-y/">Lésbicas</a>
+        <a href="/videos/anal/">Anal</a>
+      </nav>
+      <div class="post">
+        <div class="post-tags">
+          <a href="/modelo/mini-gabys-qe/" rel="tag">Mini Gabys</a>
+        </div>
+        <div class="post-tags">
+          <a href="/videos/boquetes-u/">Boquetes</a>
+          <a href="/videos/bucetas-s/">Bucetas</a>
+          <a href="/videos/bundas-i/">Bundas</a>
+          <a href="/videos/gostosas-d/">Gostosas</a>
+          <a href="/videos/porno-longo-qt/">Pornô Longo</a>
+        </div>
+        <div class="post-tags">
+          <a href="/xxx/ana-w/" rel="tag">anã</a>
+          <a href="/xxx/mamando-rola-y/" rel="tag">mamando rola</a>
+          <a href="/xxx/pack-qk/" rel="tag">pack</a>
+        </div>
+      </div>
+    </body></html>
+    """
+    meta = extract_editorial_metadata(
+        html,
+        "https://xvideosputaria.com/video-teste/",
+    )
+    assert meta.person == "Mini Gabys"
+    assert meta.categories == [
+        "Boquetes",
+        "Bucetas",
+        "Bundas",
+        "Gostosas",
+        "Pornô Longo",
+    ]
+    assert meta.tags == ["anã", "mamando rola", "pack"]
+    assert "Famosas" not in meta.categories
+    assert "Lésbicas" not in meta.categories
+    caption = format_video_caption(meta.title, meta)
+    assert caption.startswith("<b>🚫 #Mini_Gabys</b>")
+    assert "#Boquetes" in caption
+    assert "#Bucetas" in caption
+    assert "#Bundas" in caption
+    assert "#Anã" in caption
+    assert "#Mamando_Rola" in caption
+    assert "#Pack" in caption
