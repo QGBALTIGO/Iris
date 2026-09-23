@@ -180,6 +180,7 @@ async def run_platform_batch(bot) -> dict[str, object]:
                     path,
                     caption=caption,
                     as_video=True,
+                    respect_channel_only=False,
                 )
                 sent += 1
                 row = {
