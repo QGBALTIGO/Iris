@@ -179,13 +179,19 @@ def extract_editorial_metadata(page_html: str, page_url: str) -> EditorialMetada
                 'a[href*="/atriz/"], a[href*="/ator/"], a[href*="/performer/"]'
             ))
         if not category_links:
-            category_links = list(
-                soup.select('.post-tags a[href*="/category/"], .post-tags a[href*="/videos/"]')
-            )
+            if post_tag_blocks:
+                category_links = list(
+                    soup.select('.post-tags a[href*="/category/"], .post-tags a[href*="/videos/"]')
+                )
+            else:
+                category_links = list(soup.select('a[href*="/category/"]'))
         if not tag_links:
-            tag_links = list(
-                soup.select('.post-tags a[href*="/tag/"], .post-tags a[href*="/xxx/"]')
-            )
+            if post_tag_blocks:
+                tag_links = list(
+                    soup.select('.post-tags a[href*="/tag/"], .post-tags a[href*="/xxx/"]')
+                )
+            else:
+                tag_links = list(soup.select('a[href*="/tag/"]'))
 
         people.extend(_texts(explicit_person_links))
         categories.extend(_texts(category_links))
