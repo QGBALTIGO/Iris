@@ -25,6 +25,7 @@ from app.mtproto_speed_smoke import run_mtproto_speed_smoke
 from app.selftest import run_telegram_selftest
 from app.settings import settings
 from app.service_registry import detect_service
+from app.popular_queue import popular_queue
 from app.site_queue import site_queue
 from app.source_speed_smoke import run_source_speed_smoke
 from app.userbot import userbot
@@ -1724,196 +1725,29 @@ async def run_bot() -> None:
     except Exception as exc:
         print(f"IRIS_QUEUE_RESUME_ERROR {type(exc).__name__}: {exc}", flush=True)
 
-    # One-off admin batch requested on 2026-09-23. The marker lives on
-    # the Railway volume so redeploys cannot send the same batch twice.
-    if settings.admin_id:
-        async def _adhoc_platform_batch_once():
-            await asyncio.sleep(7)
-            marker = Path("/data/platform_batch_once_20260923_three_each_v3.json")
-            print(
-                f"IRIS_ADHOC_XVP_START marker={marker} exists={marker.exists()}",
-                flush=True,
-            )
-            if marker.exists():
-                return
-
-            marker.parent.mkdir(parents=True, exist_ok=True)
-            marker.write_text(
-                __import__("json").dumps(
-                    {"state": "running", "started_at": time.time()},
-                    ensure_ascii=False,
-                ),
-                encoding="utf-8",
-            )
-
-            previous = site_queue.status()
-            should_resume = bool(previous.get("running") and not previous.get("paused"))
+    if settings.popular_queue_enabled:
+        async def _popular_queue_start():
+            await asyncio.sleep(5)
             try:
-                site_queue.pause()
-                await application.bot.send_message(
-                    settings.admin_id,
-                    "🎬 <b>Novo lote editorial</b>\n\n"
-                    "Enviando <b>3 TubePussy + 3 XVideosPutaria</b>, "
-                    "todos diferentes dos vídeos já enviados, com título/modelo e tags/categorias próprias de cada página.",
-                )
-                result = await run_platform_batch(application.bot)
-                marker.write_text(
-                    __import__("json").dumps(
-                        {
-                            "state": "done",
-                            "finished_at": time.time(),
-                            "result": result,
-                        },
-                        ensure_ascii=False,
-                    ),
-                    encoding="utf-8",
-                )
-                await application.bot.send_message(
-                    settings.admin_id,
-                    "✅ <b>Novo lote concluído</b>\n\n"
-                    f"TubePussy: <b>{result.get('tubepussy', {}).get('sent', 0)}/3</b>\n"
-                    f"XVideosPutaria: <b>{result.get('xvideosputaria', {}).get('sent', 0)}/3</b>",
-                )
-                print(
-                    "IRIS_ADHOC_PLATFORM_BATCH_DONE "
-                    + __import__("json").dumps(result, ensure_ascii=False),
-                    flush=True,
-                )
+                await popular_queue.start(application.bot)
             except Exception as exc:
-                marker.write_text(
-                    __import__("json").dumps(
-                        {
-                            "state": "error",
-                            "finished_at": time.time(),
-                            "error": f"{type(exc).__name__}: {str(exc)[:500]}",
-                        },
-                        ensure_ascii=False,
-                    ),
-                    encoding="utf-8",
-                )
                 print(
-                    f"IRIS_ADHOC_PLATFORM_BATCH_ERROR {type(exc).__name__}: {exc}",
+                    f"IRIS_POPULAR_START_ERROR {type(exc).__name__}: {str(exc)[:320]}",
                     flush=True,
                 )
-                try:
-                    await application.bot.send_message(
-                        settings.admin_id,
-                        "⚠️ <b>Falha no novo lote editorial</b>\n\n"
-                        f"<code>{_safe(str(exc), 320)}</code>",
-                    )
-                except Exception:
-                    pass
-            finally:
-                try:
-                    if should_resume:
-                        await site_queue.resume(application.bot, settings.admin_id)
-                except Exception as exc:
-                    print(
-                        f"IRIS_ADHOC_PLATFORM_BATCH_RESUME_ERROR {type(exc).__name__}: {exc}",
-                        flush=True,
-                    )
+                if settings.admin_id:
+                    try:
+                        await application.bot.send_message(
+                            settings.admin_id,
+                            "⚠️ <b>Fila dos mais populares não iniciou</b>\n\n"
+                            f"<code>{_safe(str(exc), 320)}</code>",
+                        )
+                    except Exception:
+                        pass
 
         asyncio.create_task(
-            _adhoc_platform_batch_once(),
-            name="iris-adhoc-platform-batch-20260923",
-        )
-
-    if settings.admin_id:
-        async def _adhoc_xvideos_batch_once():
-            await asyncio.sleep(8)
-            marker = Path("/data/xvideosputaria_three_fresh_20260923_v2.json")
-            if marker.exists():
-                return
-
-            marker.parent.mkdir(parents=True, exist_ok=True)
-            marker.write_text(
-                __import__("json").dumps(
-                    {"state": "running", "started_at": time.time()},
-                    ensure_ascii=False,
-                ),
-                encoding="utf-8",
-            )
-
-            previous = site_queue.status()
-            should_resume = bool(previous.get("running") and not previous.get("paused"))
-            try:
-                site_queue.pause()
-                await application.bot.send_message(
-                    settings.admin_id,
-                    "🎬 <b>XVideosPutaria • novo teste</b>\n\n"
-                    "Enviando <b>3 vídeos novos</b>, sem repetir os anteriores, "
-                    "com modelo/nome e categorias/tags próprias de cada página.",
-                )
-                result = await run_platform_batch(
-                    application.bot,
-                    platforms={"xvideosputaria"},
-                    candidate_overrides={
-                        "xvideosputaria": [
-                            "https://xvideosputaria.com/pamela-alves-sendo-arrombada-pela-maior-piroca-do-brasil/",
-                            "https://xvideosputaria.com/gostosa-jaqueline-gomes-fodendo-na-academia-com-o-novinho-e/",
-                            "https://xvideosputaria.com/maru-tinha-um-consolo-e-um-leite-condensado-e-resolveu-gravar-pelada-hd/",
-                        ],
-                    },
-                )
-                marker.write_text(
-                    __import__("json").dumps(
-                        {
-                            "state": "done",
-                            "finished_at": time.time(),
-                            "result": result,
-                        },
-                        ensure_ascii=False,
-                    ),
-                    encoding="utf-8",
-                )
-                sent = result.get("xvideosputaria", {}).get("sent", 0)
-                await application.bot.send_message(
-                    settings.admin_id,
-                    "✅ <b>XVideosPutaria concluído</b>\n\n"
-                    f"Enviados: <b>{sent}/3</b>",
-                )
-                print(
-                    "IRIS_ADHOC_XVP_BATCH_DONE "
-                    + __import__("json").dumps(result, ensure_ascii=False),
-                    flush=True,
-                )
-            except Exception as exc:
-                marker.write_text(
-                    __import__("json").dumps(
-                        {
-                            "state": "error",
-                            "finished_at": time.time(),
-                            "error": f"{type(exc).__name__}: {str(exc)[:500]}",
-                        },
-                        ensure_ascii=False,
-                    ),
-                    encoding="utf-8",
-                )
-                print(
-                    f"IRIS_ADHOC_XVP_BATCH_ERROR {type(exc).__name__}: {exc}",
-                    flush=True,
-                )
-                try:
-                    await application.bot.send_message(
-                        settings.admin_id,
-                        "⚠️ <b>Falha no lote XVideosPutaria</b>\n\n"
-                        f"<code>{_safe(str(exc), 320)}</code>",
-                    )
-                except Exception:
-                    pass
-            finally:
-                try:
-                    if should_resume:
-                        await site_queue.resume(application.bot, settings.admin_id)
-                except Exception as exc:
-                    print(
-                        f"IRIS_ADHOC_XVP_RESUME_ERROR {type(exc).__name__}: {exc}",
-                        flush=True,
-                    )
-
-        asyncio.create_task(
-            _adhoc_xvideos_batch_once(),
-            name="iris-adhoc-xvideos-three-20260923",
+            _popular_queue_start(),
+            name="iris-popular-queue-start",
         )
 
     if settings.editorial_preview and settings.admin_id:
@@ -2094,6 +1928,7 @@ async def run_bot() -> None:
                 await site_queue.task
             except asyncio.CancelledError:
                 pass
+        await popular_queue.close()
         await userbot.close()
         await application.updater.stop()
         await application.stop()
