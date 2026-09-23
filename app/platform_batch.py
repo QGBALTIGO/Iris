@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import html
 import json
+import re
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
@@ -82,6 +83,11 @@ def _canonical(url: str) -> str:
     return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
 
 
+def _media_key(url: str) -> str:
+    parsed = urlsplit(url)
+    return f"{parsed.netloc.lower()}{parsed.path}".rstrip("/")
+
+
 def _looks_like_post(url: str, host: str) -> bool:
     parsed = urlsplit(url)
     if parsed.netloc.lower().removeprefix("www.") != host:
@@ -90,6 +96,8 @@ def _looks_like_post(url: str, host: str) -> bool:
     if path == "/":
         return False
     lower = path.lower()
+    if host == "tubepussy.org" and re.match(r"^/[a-z]{2}/", lower):
+        return False
     if lower.startswith(_SKIP_PREFIXES):
         return False
     if any(lower.endswith(ext) for ext in (
@@ -178,16 +186,23 @@ async def run_platform_batch(bot) -> dict[str, object]:
     delivery = DeliveryManager()
     report: dict[str, object] = {}
 
+    correction_mode = settings.platform_batch_nonce == "editorial-six-v3-correction"
+
     for platform, seed in _SEEDS.items():
-        candidates = await _discover_related(seed, limit=35)
+        candidates = await _discover_related(seed, limit=40)
         sent = 0
         attempted = 0
         failures: list[str] = []
         rows: list[dict] = []
+        seen_media: set[str] = set()
+        target = 2 if correction_mode and platform == "tubepussy" else 3
+        skip_seed = correction_mode and platform == "tubepussy"
 
         for page_url in candidates:
-            if sent >= 3:
+            if sent >= target:
                 break
+            if skip_seed and _canonical(page_url) == _canonical(seed):
+                continue
             attempted += 1
             path: Path | None = None
             try:
@@ -195,6 +210,14 @@ async def run_platform_batch(bot) -> dict[str, object]:
                 selected, path, generated, info, rejected = await download_first_valid_video(
                     result.resources
                 )
+                media_key = _media_key(selected.url)
+                if media_key in seen_media:
+                    failures.append(f"{page_url}: mídia duplicada {media_key}")
+                    path.unlink(missing_ok=True)
+                    path = None
+                    continue
+                seen_media.add(media_key)
+
                 meta = await _editorial_from_result(result, selected)
                 title = (
                     selected.title
@@ -245,6 +268,7 @@ async def run_platform_batch(bot) -> dict[str, object]:
 
         report[platform] = {
             "sent": sent,
+            "target": target,
             "attempted": attempted,
             "discovered": len(candidates),
             "rows": rows,
