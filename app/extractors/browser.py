@@ -298,6 +298,26 @@ async def probe_browser(
                             headers={"referer": page.url, "user-agent": _BROWSER_UA},
                         )
                     )
+
+            # Expose dynamically-created external frames to the Analyzer so it
+            # can probe player iframes as standalone pages.
+            for frame in page.frames:
+                frame_url = frame.url
+                if not frame_url or frame_url == page.url or not frame_url.startswith(("http://", "https://")):
+                    continue
+                try:
+                    await validate_public_url(frame_url)
+                except (UnsafeUrlError, ValueError):
+                    continue
+                found.append(
+                    MediaResource(
+                        url=frame_url,
+                        type=ResourceType.OTHER,
+                        source="browser:frame",
+                        headers={"referer": page.url, "user-agent": _BROWSER_UA},
+                        metadata={"navigation_only": True, "dynamic_frame": True},
+                    )
+                )
         finally:
             await context.close()
             await browser.close()
