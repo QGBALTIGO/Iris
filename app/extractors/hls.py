@@ -4,7 +4,6 @@ import re
 from urllib.parse import urljoin
 
 from app.models import MediaVariant
-from app.protection import detect_hls_protection
 
 _ATTR_RE = re.compile(r'([A-Z0-9-]+)=("[^"]*"|[^,]*)')
 
@@ -66,5 +65,4 @@ def inspect_hls(text: str, base_url: str) -> tuple[list[MediaVariant], bool, boo
                 mime_type="application/vnd.apple.mpegurl",
             )
         )
-    protection = detect_hls_protection(text)
-    return variants, protection.encrypted, protection.drm
+    return variants, encrypted, drm
