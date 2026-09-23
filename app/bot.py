@@ -15,6 +15,7 @@ from app.channel_backfill import channel_backfill
 from app.content import chapter_pages, content_images, content_summary
 from app.delivery import DeliveryManager, build_pdf, build_zip, human_bytes, parse_relay_payload
 from app.editorial import format_video_caption
+from app.editorial_preview import run_editorial_preview
 from app.jobs import JobStore
 from app.large_video_smoke import run_large_video_smoke
 from app.models import AnalyzeResult, DownloadJob, JobState, MediaResource, ResourceType
@@ -1721,6 +1722,16 @@ async def run_bot() -> None:
                 )
     except Exception as exc:
         print(f"IRIS_QUEUE_RESUME_ERROR {type(exc).__name__}: {exc}", flush=True)
+
+    if settings.editorial_preview and settings.admin_id:
+        async def _editorial_preview_once():
+            await asyncio.sleep(3)
+            try:
+                rows = await run_editorial_preview(application.bot)
+                print(f"IRIS_EDITORIAL_PREVIEW_SENT count={len(rows)}", flush=True)
+            except Exception as exc:
+                print(f"IRIS_EDITORIAL_PREVIEW_ERROR {type(exc).__name__}: {exc}", flush=True)
+        asyncio.create_task(_editorial_preview_once(), name="iris-editorial-preview")
 
     if settings.one_shot_url and settings.admin_id:
         async def _one_shot_once():
