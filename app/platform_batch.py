@@ -169,7 +169,17 @@ def _looks_like_post(url: str, host: str) -> bool:
     return True
 
 
-async def _discover_related(seed: str, limit: int = 30) -> tuple[list[str], dict | None]:
+async def _discover_related(
+    seed: str,
+    limit: int | None = 30,
+    *,
+    max_listing_pages: int | None = None,
+) -> tuple[list[str], dict | None]:
+    """Discover post URLs from a listing and follow its pagination.
+
+    limit=None means crawl the complete reachable pagination. Existing callers
+    keep the old bounded behavior by passing an integer limit.
+    """
     from playwright.async_api import async_playwright
 
     host = urlsplit(seed).netloc.lower().removeprefix("www.")
@@ -184,30 +194,59 @@ async def _discover_related(seed: str, limit: int = 30) -> tuple[list[str], dict
             "--disable-accelerated-video-encode",
         ])
 
-    candidates: list[str] = [_canonical(seed)]
-    seen_posts = set(candidates)
+    candidates: list[str] = []
+    seen_posts: set[str] = set()
     visited_listings: set[str] = set()
     listing_queue: list[str] = [seed]
 
     def _listing_key(value: str) -> str:
         parsed = urlsplit(value)
-        return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, parsed.query, ""))
+        path = parsed.path or "/"
+        return urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, ""))
 
-    def _is_pagination_link(value: str, text: str) -> bool:
+    def _under_seed(path: str) -> bool:
+        if not seed_path:
+            return True
+        return path == seed_path or path.startswith(seed_path + "/")
+
+    def _is_pagination_link(anchor: dict) -> bool:
+        value = str(anchor.get("href") or "")
         parsed = urlsplit(value)
         if parsed.netloc.lower().removeprefix("www.") != host:
             return False
-        path = parsed.path.rstrip("/")
+
+        path = (parsed.path or "/").rstrip("/")
         query = parsed.query.lower()
-        label = (text or "").strip().lower()
-        if path.startswith(seed_path + "/page/"):
+        label = str(anchor.get("text") or "").strip().lower()
+        rel = str(anchor.get("rel") or "").lower()
+        classes = (
+            str(anchor.get("className") or "") + " "
+            + str(anchor.get("parentClass") or "")
+        ).lower()
+
+        if "next" in rel:
             return True
-        if path.startswith(seed_path + "/") and re.search(r"/\d+$", path):
-            return True
-        if path == seed_path and any(k in query for k in ("page=", "paged=", "p=")):
-            return True
-        return label in {"próximo", "proximo", "next", "›", "»"} and (
-            path.startswith(seed_path) or path == seed_path
+        if re.search(r"/page/\d+$", path, re.I):
+            return _under_seed(path) or not seed_path
+        if re.search(r"/\d+$", path):
+            if not seed_path:
+                return True
+            if path.startswith(seed_path + "/"):
+                return True
+            # TubePussy-style listing pagination can live below a named
+            # listing route even when discovery starts at the home page.
+            if any(
+                token in path.lower()
+                for token in ("/latest-updates/", "/most-popular/", "/top-rated/")
+            ):
+                return True
+        if any(k in query for k in ("page=", "paged=", "p=", "start=", "offset=")):
+            return _under_seed(path) or not seed_path
+        if any(token in classes for token in ("pagination", "page-numbers", "pager", "paginator")):
+            if label.isdigit() or label in {"próximo", "proximo", "next", "›", "»", "→"}:
+                return True
+        return label in {"próximo", "proximo", "next", "›", "»", "→"} and (
+            _under_seed(path) or not seed_path
         )
 
     async with browser_slot("platform_batch_1"), async_playwright() as p:
@@ -224,9 +263,18 @@ async def _discover_related(seed: str, limit: int = 30) -> tuple[list[str], dict
         page = await context.new_page()
 
         pages_scanned = 0
-        max_listing_pages = max(1, min(8, (limit + 19) // 20 + 1))
+        if max_listing_pages is None:
+            if limit is None:
+                page_cap = 5000
+            else:
+                page_cap = max(1, (int(limit) + 19) // 20 + 2)
+        else:
+            page_cap = max(1, int(max_listing_pages))
 
-        while listing_queue and len(candidates) < limit and pages_scanned < max_listing_pages:
+        while listing_queue and pages_scanned < page_cap:
+            if limit is not None and len(candidates) >= limit:
+                break
+
             listing_url = listing_queue.pop(0)
             listing_key = _listing_key(listing_url)
             if listing_key in visited_listings:
@@ -238,34 +286,54 @@ async def _discover_related(seed: str, limit: int = 30) -> tuple[list[str], dict
                 await page.goto(
                     listing_url,
                     wait_until="domcontentloaded",
-                    timeout=18_000,
+                    timeout=22_000,
                 )
-                await page.wait_for_timeout(1_500)
+                await page.wait_for_timeout(1_250)
                 anchors = await page.eval_on_selector_all(
                     "a[href]",
                     """(els) => els.map(a => ({
                         href: a.href,
-                        text: (a.textContent || '').trim()
+                        text: (a.textContent || '').trim(),
+                        rel: a.rel || '',
+                        className: a.className || '',
+                        parentClass: (a.parentElement && a.parentElement.className) || ''
                     })).filter(x => x.href)""",
                 )
-            except Exception:
+            except Exception as exc:
+                print(
+                    f"IRIS_DISCOVERY_PAGE_ERROR host={host} page={listing_url} "
+                    f"error={type(exc).__name__}:{str(exc)[:180]}",
+                    flush=True,
+                )
                 continue
 
             queued_keys = {_listing_key(x) for x in listing_queue}
             for anchor in anchors:
                 href = str(anchor.get("href") or "")
-                text = str(anchor.get("text") or "")
                 value = _canonical(href)
+
                 if value not in seen_posts and _looks_like_post(value, host):
                     seen_posts.add(value)
                     candidates.append(value)
-                    if len(candidates) >= limit:
+                    if limit is not None and len(candidates) >= limit:
                         break
-                elif _is_pagination_link(href, text):
+
+                if _is_pagination_link(anchor):
                     nav_key = _listing_key(href)
-                    if nav_key not in visited_listings and nav_key not in queued_keys:
+                    if (
+                        nav_key not in visited_listings
+                        and nav_key not in queued_keys
+                        and len(visited_listings) + len(listing_queue) < page_cap
+                    ):
                         listing_queue.append(href)
                         queued_keys.add(nav_key)
+
+            if pages_scanned % 25 == 0:
+                print(
+                    f"IRIS_DISCOVERY_PROGRESS host={host} scanned={pages_scanned} "
+                    f"queued={len(listing_queue)} candidates={len(candidates)}",
+                    flush=True,
+                )
 
         storage_state = await context.storage_state()
         await context.close()
@@ -273,10 +341,10 @@ async def _discover_related(seed: str, limit: int = 30) -> tuple[list[str], dict
 
     print(
         f"IRIS_DISCOVERY_PAGES host={host} scanned={len(visited_listings)} "
-        f"candidates={len(candidates)}",
+        f"candidates={len(candidates)} exhausted={not bool(listing_queue)}",
         flush=True,
     )
-    return candidates[:limit], storage_state
+    return (candidates if limit is None else candidates[:limit]), storage_state
 
 
 async def _editorial_from_result(result, selected) -> dict | None:
