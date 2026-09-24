@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import math
+import time
 from contextlib import suppress
 from pathlib import Path
 
@@ -15,15 +16,17 @@ from app.settings import settings
 
 
 def connection_count(file_size: int) -> int:
-    # Telegram becomes noticeably less stable when a single process opens
-    # 12-16 parallel MTProto upload senders. Cap at 8 for 24/7 reliability.
+    # Balanced mode: faster than the conservative 8-connection cap, while
+    # staying below the old 16-connection mode that produced frequent drops.
     if file_size < 2 * 1024 * 1024:
         return 2
     if file_size < 8 * 1024 * 1024:
         return 4
     if file_size < 64 * 1024 * 1024:
-        return 6
-    return 8
+        return 8
+    if file_size < 256 * 1024 * 1024:
+        return 10
+    return 12
 
 
 async def _new_sender(client):
@@ -55,6 +58,12 @@ async def upload_path(client, path: Path, progress_callback=None, connection_ove
     part_count = math.ceil(file_size / part_size)
     is_large = file_size > 10 * 1024 * 1024
     connections = min(connection_override or connection_count(file_size), max(1, part_count))
+    started_at = time.monotonic()
+    print(
+        f"IRIS_MTPROTO_UPLOAD_START bytes={file_size} parts={part_count} "
+        f"connections={connections}",
+        flush=True,
+    )
     senders = await asyncio.gather(*(_new_sender(client) for _ in range(connections)))
 
     md5 = hashlib.md5(usedforsecurity=False)
@@ -102,6 +111,14 @@ async def upload_path(client, path: Path, progress_callback=None, connection_ove
             *(sender.disconnect() for sender in senders),
             return_exceptions=True,
         )
+
+    elapsed = max(0.001, time.monotonic() - started_at)
+    mbps = (file_size / 1024 / 1024) / elapsed
+    print(
+        f"IRIS_MTPROTO_UPLOAD_DONE bytes={file_size} connections={connections} "
+        f"seconds={elapsed:.1f} MiBps={mbps:.2f}",
+        flush=True,
+    )
 
     if is_large:
         return InputFileBig(file_id, part_count, path.name)
