@@ -31,6 +31,10 @@ class UserbotManager:
         )
 
     @property
+    def busy(self) -> bool:
+        return self._lock.locked()
+
+    @property
     def session_path(self) -> Path:
         path = Path(self.config.telegram_session_path)
         path.parent.mkdir(parents=True, exist_ok=True)
