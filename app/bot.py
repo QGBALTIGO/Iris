@@ -508,6 +508,8 @@ async def run_bot() -> None:
     defaults = Defaults(parse_mode=ParseMode.HTML)
     application = Application.builder().token(settings.bot_token).defaults(defaults).build()
 
+    watchdog_task: asyncio.Task | None = None
+
     def summary_markup(result: AnalyzeResult, key: str):
         rows = []
         for bucket in ("v", "p", "a", "i", "f"):
@@ -1819,6 +1821,73 @@ async def run_bot() -> None:
             name="iris-popular-queue-start",
         )
 
+    async def _queue_watchdog():
+        interval = max(15.0, float(settings.watchdog_interval_seconds))
+        await asyncio.sleep(interval)
+        while True:
+            try:
+                if userbot.configured and not await userbot.is_authorized():
+                    try:
+                        await userbot.reconnect()
+                    except Exception as exc:
+                        print(
+                            "IRIS_WATCHDOG_MTPROTO_ERROR "
+                            f"{type(exc).__name__}:{str(exc)[:220]}",
+                            flush=True,
+                        )
+
+                if settings.site_queue_auto_start and settings.admin_id:
+                    state = site_queue.status()
+                    counts = state.get("counts") or {}
+                    outstanding = sum(
+                        int(counts.get(key, 0))
+                        for key in (
+                            "pending",
+                            "retry_local",
+                            "processing",
+                            "awaiting_delivery",
+                        )
+                    )
+                    if outstanding > 0 and (
+                        site_queue.task is None or site_queue.task.done()
+                    ):
+                        await site_queue.resume(
+                            application.bot,
+                            settings.admin_id,
+                        )
+                        print(
+                            "IRIS_WATCHDOG_RESTART queue=legendados "
+                            + site_queue.summary_for_logs(),
+                            flush=True,
+                        )
+
+                if settings.popular_queue_enabled and (
+                    popular_queue.task is None or popular_queue.task.done()
+                ):
+                    await popular_queue.start(application.bot)
+                    print(
+                        "IRIS_WATCHDOG_RESTART queue=popular "
+                        + __import__("json").dumps(
+                            popular_queue.status(),
+                            ensure_ascii=False,
+                        ),
+                        flush=True,
+                    )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                print(
+                    "IRIS_WATCHDOG_ERROR "
+                    f"{type(exc).__name__}:{str(exc)[:300]}",
+                    flush=True,
+                )
+            await asyncio.sleep(interval)
+
+    watchdog_task = asyncio.create_task(
+        _queue_watchdog(),
+        name="iris-queue-watchdog",
+    )
+
     if settings.editorial_preview and settings.admin_id:
         async def _editorial_preview_once():
             await asyncio.sleep(3)
@@ -1991,6 +2060,12 @@ async def run_bot() -> None:
     try:
         await asyncio.Event().wait()
     finally:
+        if watchdog_task and not watchdog_task.done():
+            watchdog_task.cancel()
+            try:
+                await watchdog_task
+            except asyncio.CancelledError:
+                pass
         if site_queue.task and not site_queue.task.done():
             site_queue.task.cancel()
             try:
