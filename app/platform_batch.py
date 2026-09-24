@@ -311,12 +311,17 @@ async def _discover_related(
             for anchor in anchors:
                 href = str(anchor.get("href") or "")
                 value = _canonical(href)
+                is_post = _looks_like_post(value, host)
 
-                if value not in seen_posts and _looks_like_post(value, host):
-                    seen_posts.add(value)
-                    candidates.append(value)
-                    if limit is not None and len(candidates) >= limit:
-                        break
+                if is_post:
+                    if value not in seen_posts:
+                        seen_posts.add(value)
+                        candidates.append(value)
+                        if limit is not None and len(candidates) >= limit:
+                            break
+                    # A post URL (e.g. /shorts/27864/) must never be treated
+                    # as numeric pagination just because it ends in digits.
+                    continue
 
                 if _is_pagination_link(anchor):
                     nav_key = _listing_key(href)
