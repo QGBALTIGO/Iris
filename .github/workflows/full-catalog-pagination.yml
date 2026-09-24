@@ -1,0 +1,44 @@
+name: Full catalog pagination smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/full-catalog-pagination.yml"
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      - run: python -m playwright install --with-deps chromium
+      - name: Verify pagination expands both catalogs
+        run: |
+          python - <<'PY'
+          import asyncio, json
+          from app.platform_batch import _discover_related
+
+          SOURCES={
+            "tubepussy":"https://tubepussy.org/",
+            "xvideosputaria":"https://xvideosputaria.com/",
+          }
+
+          async def main():
+              out={}
+              for name,url in SOURCES.items():
+                  first,_=await _discover_related(url,limit=None,max_listing_pages=1)
+                  many,_=await _discover_related(url,limit=None,max_listing_pages=8)
+                  out[name]={"first":len(first),"eight_pages":len(many),"sample":many[:5]}
+                  print("CATALOG_PAGINATION "+json.dumps({"source":name,**out[name]},ensure_ascii=False))
+                  assert len(many) >= len(first)
+                  assert len(many) > 0
+              print("CATALOG_PAGINATION_DONE "+json.dumps(out,ensure_ascii=False))
+
+          asyncio.run(main())
+          PY
