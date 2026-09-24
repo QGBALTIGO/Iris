@@ -323,6 +323,37 @@ async def _discover_related(
 
                 if anchors is None:
                     raise last_anchor_error or RuntimeError("não consegui ler os links")
+
+                if host == "xvideosputaria.com" and pages_scanned == 1:
+                    try:
+                        pagination_hints = await page.eval_on_selector_all(
+                            "a,button,[role='button'],[data-page],[data-href]",
+                            """(els) => els.map(el => ({
+                                tag: el.tagName,
+                                text: (el.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 80),
+                                href: el.href || el.getAttribute('href') || '',
+                                rel: el.rel || '',
+                                className: typeof el.className === 'string' ? el.className : '',
+                                parentClass: (el.parentElement && typeof el.parentElement.className === 'string') ? el.parentElement.className : '',
+                                dataPage: el.getAttribute('data-page') || '',
+                                dataHref: el.getAttribute('data-href') || '',
+                                aria: el.getAttribute('aria-label') || '',
+                                onclick: el.getAttribute('onclick') || ''
+                            })).filter(x => {
+                                const hay = [x.text,x.rel,x.className,x.parentClass,x.aria,x.onclick].join(' ').toLowerCase();
+                                return x.dataPage || x.dataHref || /pag|next|próx|proxim|forward|›|»/.test(hay) || /^\\d+$/.test(x.text);
+                            }).slice(0, 80)""",
+                        )
+                        print(
+                            "IRIS_XVP_PAGINATION_HINTS "
+                            + json.dumps(pagination_hints, ensure_ascii=False),
+                            flush=True,
+                        )
+                    except Exception as hint_exc:
+                        print(
+                            f"IRIS_XVP_PAGINATION_HINTS_ERROR {type(hint_exc).__name__}:{str(hint_exc)[:180]}",
+                            flush=True,
+                        )
             except Exception as exc:
                 print(
                     f"IRIS_DISCOVERY_PAGE_ERROR host={host} page={listing_url} "
