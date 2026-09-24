@@ -152,7 +152,14 @@ def _looks_like_post(url: str, host: str) -> bool:
             return False
         if segments[0] in {
             "porno-novo-hdd",
+            "porno-novos",
             "mais-populares",
+            "categorias",
+            "categoria",
+            "tags",
+            "tag",
+            "atores",
+            "modelos",
             "login",
             "contato",
             "dmca",
