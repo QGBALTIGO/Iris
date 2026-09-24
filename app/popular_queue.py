@@ -30,6 +30,7 @@ SOURCES = (
     ("xvideosputaria", "https://xvideosputaria.com/"),
 )
 _SOURCE_URL = dict(SOURCES)
+CATALOG_DISCOVERY_VERSION = "full-catalog-v1"
 
 
 @dataclass(slots=True)
@@ -95,10 +96,18 @@ class PopularQueueManager:
                     next_source TEXT NOT NULL DEFAULT 'tubepussy',
                     running INTEGER NOT NULL DEFAULT 0,
                     last_discovery_at REAL,
+                    discovery_version TEXT,
                     updated_at REAL NOT NULL
                 );
                 """
             )
+            columns = {
+                str(row["name"])
+                for row in db.execute("PRAGMA table_info(popular_state)").fetchall()
+            }
+            if "discovery_version" not in columns:
+                db.execute("ALTER TABLE popular_state ADD COLUMN discovery_version TEXT")
+
             db.execute(
                 """
                 INSERT OR IGNORE INTO popular_state(
@@ -164,6 +173,7 @@ class PopularQueueManager:
             "running": bool(state["running"]) if state else False,
             "next_source": str(state["next_source"]) if state else "tubepussy",
             "last_discovery_at": state["last_discovery_at"] if state else None,
+            "discovery_version": state["discovery_version"] if state else None,
             "counts": counts,
         }
 
@@ -256,10 +266,23 @@ class PopularQueueManager:
                 except Exception as exc:
                     report[source] = {"found": 0, "added": 0}
                     print(
-                        f"IRIS_POPULAR_DISCOVER_ERROR source={source} "
+                        f"IRIS_CATALOG_DISCOVER_ERROR source={source} "
                         f"error={type(exc).__name__}:{str(exc)[:240]}",
                         flush=True,
                     )
+
+            # Mark the migration only after both catalog roots were attempted.
+            # Existing sent/duplicate rows are preserved; only discovery scope changes.
+            with self._connect() as db:
+                db.execute(
+                    """
+                    UPDATE popular_state
+                    SET discovery_version=?, updated_at=?
+                    WHERE id=1
+                    """,
+                    (CATALOG_DISCOVERY_VERSION, time.time()),
+                )
+                db.commit()
             return report
 
     def _next_item(self, source: str) -> PopularItem | None:
@@ -600,7 +623,9 @@ class PopularQueueManager:
         last = float(state["last_discovery_at"] or 0) if state else 0.0
         age = time.time() - last
         refresh = max(300, int(settings.popular_queue_refresh_seconds))
-        if force or self._pending_count() == 0 or age >= refresh:
+        version = str(state["discovery_version"] or "") if state else ""
+        migrated = version == CATALOG_DISCOVERY_VERSION
+        if force or not migrated or self._pending_count() == 0 or age >= refresh:
             await self.discover()
 
     async def start(self, bot=None) -> None:
