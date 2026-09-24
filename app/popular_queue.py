@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.analyzer import Analyzer
+from app.browser_guard import browser_slot
 from app.editorial import extract_editorial_metadata, format_video_caption
 from app.extractors.browser import probe_browser
 from app.platform_batch import (
@@ -395,7 +396,7 @@ class PopularQueueManager:
                 "--disable-accelerated-video-encode",
             ])
 
-        async with async_playwright() as p:
+        async with browser_slot("popular_editorial"), async_playwright() as p:
             browser = await p.chromium.launch(headless=True, args=launch_args)
             context = await browser.new_context(
                 storage_state=storage_state,
