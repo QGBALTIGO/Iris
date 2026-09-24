@@ -574,6 +574,8 @@ class SiteQueueManager:
                 """
                 UPDATE queue_items
                 SET status='pending',
+                    attempts=0,
+                    last_error='Recuperado após falha do navegador',
                     updated_at=?
                 WHERE site=? AND status='failed'
                 """,
@@ -601,7 +603,7 @@ class SiteQueueManager:
             cur = db.execute(
                 """
                 UPDATE queue_items
-                SET status='pending', last_error=NULL, updated_at=?
+                SET status='pending', attempts=0, last_error=NULL, updated_at=?
                 WHERE site=? AND status='failed'
                 """,
                 (time.time(), _SITE),
