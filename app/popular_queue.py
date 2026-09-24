@@ -39,7 +39,7 @@ _SOURCE_FALLBACKS = {
         "https://xvideosputaria.com/mais-populares/#forward",
     ),
 }
-CATALOG_DISCOVERY_VERSION = "full-catalog-v2"
+CATALOG_DISCOVERY_VERSION = "full-catalog-v3"
 
 
 @dataclass(slots=True)
