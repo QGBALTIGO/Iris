@@ -448,7 +448,7 @@ class SiteQueueManager:
         with self._connect() as db:
             state = db.execute(
                 "SELECT last_recovery_nonce FROM queue_state WHERE site=?",
-                (_SITE, max(1, int(settings.queue_max_attempts))),
+                (_SITE,),
             ).fetchone()
             if state and state["last_recovery_nonce"] == nonce:
                 return 0
