@@ -30,7 +30,16 @@ SOURCES = (
     ("xvideosputaria", "https://xvideosputaria.com/"),
 )
 _SOURCE_URL = dict(SOURCES)
-CATALOG_DISCOVERY_VERSION = "full-catalog-v1"
+_SOURCE_FALLBACKS = {
+    "tubepussy": (
+        "https://tubepussy.org/latest-updates/",
+    ),
+    "xvideosputaria": (
+        "https://xvideosputaria.com/porno-novo-hdd/#forward",
+        "https://xvideosputaria.com/mais-populares/#forward",
+    ),
+}
+CATALOG_DISCOVERY_VERSION = "full-catalog-v2"
 
 
 @dataclass(slots=True)
@@ -234,20 +243,52 @@ class PopularQueueManager:
     async def discover_source(self, source: str) -> dict[str, int]:
         if source not in _SOURCE_URL:
             raise ValueError(f"Fonte desconhecida: {source}")
-        candidates, storage_state = await _discover_related(
-            _SOURCE_URL[source],
-            limit=None,
-            max_listing_pages=max(50, int(settings.popular_queue_max_pages)),
-        )
-        if storage_state:
-            self._browser_states[source] = storage_state
-        result = self._persist_candidates(source, candidates)
+
+        seeds = (_SOURCE_URL[source],) + tuple(_SOURCE_FALLBACKS.get(source, ()))
+        best_candidates: list[str] = []
+        best_state: dict | None = None
+        best_seed = seeds[0]
+        last_error: Exception | None = None
+
+        for seed in seeds:
+            try:
+                candidates, storage_state = await _discover_related(
+                    seed,
+                    limit=None,
+                    max_listing_pages=max(50, int(settings.popular_queue_max_pages)),
+                )
+            except Exception as exc:
+                last_error = exc
+                print(
+                    f"IRIS_CATALOG_SEED_ERROR source={source} seed={seed} "
+                    f"error={type(exc).__name__}:{str(exc)[:220]}",
+                    flush=True,
+                )
+                continue
+
+            if len(candidates) > len(best_candidates):
+                best_candidates = candidates
+                best_state = storage_state
+                best_seed = seed
+
+            # A healthy first page has many cards. If the home produced enough
+            # candidates, keep crawling that canonical route rather than doing
+            # the fallback listing too.
+            if len(candidates) >= 20:
+                break
+
+        if not best_candidates and last_error is not None:
+            raise last_error
+
+        if best_state:
+            self._browser_states[source] = best_state
+        result = self._persist_candidates(source, best_candidates)
         print(
             "IRIS_CATALOG_DISCOVER "
             + json.dumps(
                 {
                     "source": source,
-                    "seed": _SOURCE_URL[source],
+                    "seed": best_seed,
                     "max_pages": max(50, int(settings.popular_queue_max_pages)),
                     **result,
                 },
@@ -260,19 +301,23 @@ class PopularQueueManager:
     async def discover(self) -> dict[str, dict[str, int]]:
         async with self._discover_lock:
             report: dict[str, dict[str, int]] = {}
-            for source, _ in SOURCES:
+
+            async def run_source(source: str):
                 try:
-                    report[source] = await self.discover_source(source)
+                    return source, await self.discover_source(source)
                 except Exception as exc:
-                    report[source] = {"found": 0, "added": 0}
                     print(
                         f"IRIS_CATALOG_DISCOVER_ERROR source={source} "
                         f"error={type(exc).__name__}:{str(exc)[:240]}",
                         flush=True,
                     )
+                    return source, {"found": 0, "added": 0}
 
-            # Mark the migration only after both catalog roots were attempted.
-            # Existing sent/duplicate rows are preserved; only discovery scope changes.
+            rows = await asyncio.gather(
+                *(run_source(source) for source, _ in SOURCES)
+            )
+            report.update(rows)
+
             with self._connect() as db:
                 db.execute(
                     """
