@@ -8,6 +8,7 @@ from pathlib import Path
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 from app.analyzer import Analyzer
+from app.browser_guard import browser_slot
 from app.delivery import DeliveryManager
 from app.editorial import extract_editorial_metadata, format_video_caption
 from app.extractors.browser import probe_browser
@@ -209,7 +210,7 @@ async def _discover_related(seed: str, limit: int = 30) -> tuple[list[str], dict
             path.startswith(seed_path) or path == seed_path
         )
 
-    async with async_playwright() as p:
+    async with browser_slot("platform_batch_1"), async_playwright() as p:
         browser = await p.chromium.launch(headless=True, args=launch_args)
         context = await browser.new_context(
             user_agent=(
@@ -313,7 +314,7 @@ async def _editorial_from_browser(page_url: str) -> dict | None:
             "--disable-accelerated-video-encode",
         ])
 
-    async with async_playwright() as p:
+    async with browser_slot("platform_batch_2"), async_playwright() as p:
         browser = await p.chromium.launch(headless=True, args=launch_args)
         context = await browser.new_context(
             user_agent=(
