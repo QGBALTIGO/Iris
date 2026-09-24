@@ -19,6 +19,7 @@ from app.platform_batch import (
     _file_fingerprint,
     _media_key,
     _metadata_is_useful,
+    _looks_like_post,
 )
 from app.settings import settings
 from app.userbot import userbot
@@ -798,6 +799,45 @@ class PopularQueueManager:
             if path and path.exists():
                 path.unlink(missing_ok=True)
 
+    def prune_navigation_items(self) -> int:
+        changed = 0
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                SELECT id, source, page_url, status
+                FROM popular_items
+                WHERE status IN ('pending','processing','failed')
+                """
+            ).fetchall()
+            for row in rows:
+                source = str(row["source"])
+                host = (
+                    "tubepussy.org"
+                    if source == "tubepussy"
+                    else "xvideosputaria.com"
+                )
+                page_url = str(row["page_url"])
+                if _looks_like_post(page_url, host):
+                    continue
+                db.execute(
+                    """
+                    UPDATE popular_items
+                    SET status='ignored',
+                        last_error='Página de catálogo/navegação',
+                        updated_at=?
+                    WHERE id=?
+                    """,
+                    (time.time(), int(row["id"])),
+                )
+                changed += 1
+            db.commit()
+        if changed:
+            print(
+                f"IRIS_POPULAR_PRUNE_NAVIGATION changed={changed}",
+                flush=True,
+            )
+        return changed
+
     def _pending_count(self, source: str | None = None) -> int:
         with self._connect() as db:
             if source:
@@ -825,6 +865,7 @@ class PopularQueueManager:
                 "Conta 06 entrou no canal popular, mas não tem permissão para publicar"
             )
 
+        self.prune_navigation_items()
         pending_before = self._pending_count()
         print(
             "IRIS_POPULAR_PRESTART "
