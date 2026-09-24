@@ -26,20 +26,21 @@ from app.video_candidates import download_first_valid_video
 
 
 SOURCES = (
-    ("tubepussy", "https://tubepussy.org/"),
-    ("xvideosputaria", "https://xvideosputaria.com/"),
+    ("tubepussy", "https://tubepussy.org/latest-updates/"),
+    ("xvideosputaria", "https://xvideosputaria.com/porno-novo-hdd/"),
 )
 _SOURCE_URL = dict(SOURCES)
 _SOURCE_FALLBACKS = {
     "tubepussy": (
-        "https://tubepussy.org/latest-updates/",
+        "https://tubepussy.org/",
+        "https://tubepussy.org/most-popular/",
     ),
     "xvideosputaria": (
-        "https://xvideosputaria.com/porno-novo-hdd/#forward",
+        "https://xvideosputaria.com/",
         "https://xvideosputaria.com/mais-populares/#forward",
     ),
 }
-CATALOG_DISCOVERY_VERSION = "full-catalog-v3"
+CATALOG_DISCOVERY_VERSION = "full-catalog-v4"
 
 
 @dataclass(slots=True)
