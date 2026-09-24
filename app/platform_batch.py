@@ -126,6 +126,7 @@ def _looks_like_post(url: str, host: str) -> bool:
                 "latest-updates",
                 "top-rated",
                 "most-popular",
+                "shorts",
                 "community",
                 "login",
                 "login-required",
@@ -262,6 +263,17 @@ async def _discover_related(
         )
         page = await context.new_page()
 
+        async def keep_listing_navigation(route):
+            request = route.request
+            if request.is_navigation_request() and request.frame == page.main_frame:
+                target_host = urlsplit(request.url).netloc.lower().removeprefix("www.")
+                if target_host and target_host != host:
+                    await route.abort()
+                    return
+            await route.continue_()
+
+        await page.route("**/*", keep_listing_navigation)
+
         pages_scanned = 0
         if max_listing_pages is None:
             if limit is None:
@@ -288,21 +300,33 @@ async def _discover_related(
                     wait_until="domcontentloaded",
                     timeout=22_000,
                 )
-                await page.wait_for_timeout(1_250)
-                anchors = await page.eval_on_selector_all(
-                    "a[href]",
-                    """(els) => els.map(a => ({
-                        href: a.href,
-                        text: (a.textContent || '').trim(),
-                        rel: a.rel || '',
-                        className: a.className || '',
-                        parentClass: (a.parentElement && a.parentElement.className) || ''
-                    })).filter(x => x.href)""",
-                )
+                await page.wait_for_timeout(450 if host == "tubepussy.org" else 1_250)
+
+                anchors = None
+                last_anchor_error = None
+                for _ in range(4):
+                    try:
+                        anchors = await page.eval_on_selector_all(
+                            "a[href]",
+                            """(els) => els.map(a => ({
+                                href: a.href,
+                                text: (a.textContent || '').trim(),
+                                rel: a.rel || '',
+                                className: a.className || '',
+                                parentClass: (a.parentElement && a.parentElement.className) || ''
+                            })).filter(x => x.href)""",
+                        )
+                        break
+                    except Exception as exc:
+                        last_anchor_error = exc
+                        await page.wait_for_timeout(750)
+
+                if anchors is None:
+                    raise last_anchor_error or RuntimeError("não consegui ler os links")
             except Exception as exc:
                 print(
                     f"IRIS_DISCOVERY_PAGE_ERROR host={host} page={listing_url} "
-                    f"error={type(exc).__name__}:{str(exc)[:180]}",
+                    f"current={page.url} error={type(exc).__name__}:{str(exc)[:180]}",
                     flush=True,
                 )
                 continue
