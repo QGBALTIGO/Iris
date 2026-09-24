@@ -62,6 +62,7 @@ class PopularQueueManager:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.analyzer = Analyzer()
         self.task: asyncio.Task | None = None
+        self.discovery_task: asyncio.Task | None = None
         self._browser_states: dict[str, dict] = {}
         self._discover_lock = asyncio.Lock()
         self._ensure_schema()
@@ -298,6 +299,131 @@ class PopularQueueManager:
             flush=True,
         )
         return result
+
+    async def quick_discover_source(self, source: str) -> dict[str, int]:
+        """Populate enough recent pages to start sending without a full-catalog stall."""
+        if source not in _SOURCE_URL:
+            raise ValueError(f"Fonte desconhecida: {source}")
+
+        seeds = (_SOURCE_URL[source],) + tuple(_SOURCE_FALLBACKS.get(source, ()))
+        best_candidates: list[str] = []
+        best_state: dict | None = None
+        best_seed = seeds[0]
+        last_error: Exception | None = None
+
+        for seed in seeds:
+            try:
+                candidates, storage_state = await _discover_related(
+                    seed,
+                    limit=600,
+                    max_listing_pages=30,
+                )
+            except Exception as exc:
+                last_error = exc
+                print(
+                    f"IRIS_POPULAR_QUICK_SEED_ERROR source={source} seed={seed} "
+                    f"error={type(exc).__name__}:{str(exc)[:220]}",
+                    flush=True,
+                )
+                continue
+
+            if len(candidates) > len(best_candidates):
+                best_candidates = candidates
+                best_state = storage_state
+                best_seed = seed
+            if len(candidates) >= 100:
+                break
+
+        if not best_candidates and last_error is not None:
+            raise last_error
+
+        if best_state:
+            self._browser_states[source] = best_state
+
+        result = self._persist_candidates(source, best_candidates)
+        print(
+            "IRIS_POPULAR_QUICK_DISCOVER "
+            + json.dumps(
+                {
+                    "source": source,
+                    "seed": best_seed,
+                    "max_pages": 30,
+                    **result,
+                },
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
+        return result
+
+    async def quick_discover(self) -> dict[str, dict[str, int]]:
+        rows = await asyncio.gather(
+            *(self.quick_discover_source(source) for source, _ in SOURCES),
+            return_exceptions=True,
+        )
+        report: dict[str, dict[str, int]] = {}
+        for (source, _), row in zip(SOURCES, rows):
+            if isinstance(row, Exception):
+                print(
+                    f"IRIS_POPULAR_QUICK_ERROR source={source} "
+                    f"error={type(row).__name__}:{str(row)[:240]}",
+                    flush=True,
+                )
+                report[source] = {"found": 0, "added": 0}
+            else:
+                report[source] = row
+        return report
+
+    def _discovery_needed(self, *, force: bool = False) -> bool:
+        state = self._state()
+        last = float(state["last_discovery_at"] or 0) if state else 0.0
+        age = time.time() - last
+        refresh = max(300, int(settings.popular_queue_refresh_seconds))
+        version = str(state["discovery_version"] or "") if state else ""
+        migrated = version == CATALOG_DISCOVERY_VERSION
+        return bool(
+            force
+            or not migrated
+            or self._pending_count() == 0
+            or age >= refresh
+        )
+
+    def _schedule_full_discovery(self, *, force: bool = False) -> None:
+        if self.discovery_task and not self.discovery_task.done():
+            return
+        if not self._discovery_needed(force=force):
+            return
+
+        async def run_background():
+            try:
+                report = await self.discover()
+                print(
+                    "IRIS_POPULAR_BACKGROUND_DISCOVER "
+                    + json.dumps(
+                        {
+                            "report": report,
+                            "pending": self._pending_count(),
+                            "status": self.status(),
+                        },
+                        ensure_ascii=False,
+                    ),
+                    flush=True,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                print(
+                    f"IRIS_POPULAR_BACKGROUND_ERROR "
+                    f"{type(exc).__name__}:{str(exc)[:300]}",
+                    flush=True,
+                )
+            finally:
+                self.discovery_task = None
+
+        self.discovery_task = asyncio.create_task(
+            run_background(),
+            name="iris-popular-full-discovery",
+        )
 
     async def discover(self) -> dict[str, dict[str, int]]:
         async with self._discover_lock:
@@ -664,16 +790,6 @@ class PopularQueueManager:
                 ).fetchone()
         return int(row["n"]) if row else 0
 
-    async def _ensure_fresh_discovery(self, *, force: bool = False) -> None:
-        state = self._state()
-        last = float(state["last_discovery_at"] or 0) if state else 0.0
-        age = time.time() - last
-        refresh = max(300, int(settings.popular_queue_refresh_seconds))
-        version = str(state["discovery_version"] or "") if state else ""
-        migrated = version == CATALOG_DISCOVERY_VERSION
-        if force or not migrated or self._pending_count() == 0 or age >= refresh:
-            await self.discover()
-
     async def start(self, bot=None) -> None:
         if not settings.popular_queue_enabled:
             return
@@ -688,11 +804,48 @@ class PopularQueueManager:
                 "Conta 06 entrou no canal popular, mas não tem permissão para publicar"
             )
 
-        await self._ensure_fresh_discovery(force=self._pending_count() == 0)
+        pending_before = self._pending_count()
+        print(
+            "IRIS_POPULAR_PRESTART "
+            + json.dumps(
+                {
+                    "channel_id": info.get("id"),
+                    "channel_title": info.get("title"),
+                    "pending": pending_before,
+                    "status": self.status(),
+                },
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
+
+        if pending_before == 0:
+            try:
+                quick = await self.quick_discover()
+                print(
+                    "IRIS_POPULAR_QUICK_READY "
+                    + json.dumps(
+                        {
+                            "report": quick,
+                            "pending": self._pending_count(),
+                        },
+                        ensure_ascii=False,
+                    ),
+                    flush=True,
+                )
+            except Exception as exc:
+                print(
+                    f"IRIS_POPULAR_QUICK_FATAL "
+                    f"{type(exc).__name__}:{str(exc)[:300]}",
+                    flush=True,
+                )
+
         self._set_running(True)
-        if self.task and not self.task.done():
-            return
-        self.task = asyncio.create_task(self._worker(), name="iris-popular-queue")
+        if not self.task or self.task.done():
+            self.task = asyncio.create_task(self._worker(), name="iris-popular-queue")
+
+        self._schedule_full_discovery(force=self._pending_count() == 0)
+
         print(
             "IRIS_POPULAR_START "
             + json.dumps(
@@ -701,6 +854,7 @@ class PopularQueueManager:
                     "channel_title": info.get("title"),
                     "next_source": self.status().get("next_source"),
                     "pending": self._pending_count(),
+                    "status": self.status(),
                 },
                 ensure_ascii=False,
             ),
@@ -711,7 +865,7 @@ class PopularQueueManager:
         failures_on_turn = 0
         while settings.popular_queue_enabled:
             try:
-                await self._ensure_fresh_discovery()
+                self._schedule_full_discovery()
                 state = self._state()
                 preferred = str(state["next_source"] or "tubepussy")
                 item = self._next_item(preferred)
@@ -720,9 +874,24 @@ class PopularQueueManager:
                     other = self._other_source(preferred)
                     item = self._next_item(other)
                     if item is None:
+                        self._schedule_full_discovery(force=True)
+                        print(
+                            "IRIS_POPULAR_IDLE "
+                            + json.dumps(
+                                {
+                                    "status": self.status(),
+                                    "full_discovery_running": bool(
+                                        self.discovery_task
+                                        and not self.discovery_task.done()
+                                    ),
+                                },
+                                ensure_ascii=False,
+                            ),
+                            flush=True,
+                        )
                         await asyncio.sleep(min(
-                            300,
-                            max(30, int(settings.popular_queue_idle_seconds)),
+                            30,
+                            max(10, int(settings.popular_queue_idle_seconds)),
                         ))
                         continue
 
@@ -784,6 +953,12 @@ class PopularQueueManager:
             self.task.cancel()
             try:
                 await self.task
+            except asyncio.CancelledError:
+                pass
+        if self.discovery_task and not self.discovery_task.done():
+            self.discovery_task.cancel()
+            try:
+                await self.discovery_task
             except asyncio.CancelledError:
                 pass
 
