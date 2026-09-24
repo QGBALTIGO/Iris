@@ -357,13 +357,17 @@ class PopularQueueManager:
         )
         return result
 
-    async def quick_discover(self) -> dict[str, dict[str, int]]:
+    async def quick_discover(
+        self,
+        sources: list[str] | None = None,
+    ) -> dict[str, dict[str, int]]:
+        selected = sources or [source for source, _ in SOURCES]
         rows = await asyncio.gather(
-            *(self.quick_discover_source(source) for source, _ in SOURCES),
+            *(self.quick_discover_source(source) for source in selected),
             return_exceptions=True,
         )
         report: dict[str, dict[str, int]] = {}
-        for (source, _), row in zip(SOURCES, rows):
+        for source, row in zip(selected, rows):
             if isinstance(row, Exception):
                 print(
                     f"IRIS_POPULAR_QUICK_ERROR source={source} "
@@ -376,6 +380,15 @@ class PopularQueueManager:
         return report
 
     def _discovery_needed(self, *, force: bool = False) -> bool:
+        pending = self._pending_count()
+        if force:
+            return True
+        # Delivery has priority over a multi-page catalog crawl. A full crawl
+        # can consume Chromium slots for minutes, so only run it when the
+        # ready-to-send buffer is getting low.
+        if pending >= 20:
+            return False
+
         state = self._state()
         last = float(state["last_discovery_at"] or 0) if state else 0.0
         age = time.time() - last
@@ -383,9 +396,8 @@ class PopularQueueManager:
         version = str(state["discovery_version"] or "") if state else ""
         migrated = version == CATALOG_DISCOVERY_VERSION
         return bool(
-            force
-            or not migrated
-            or self._pending_count() == 0
+            not migrated
+            or pending == 0
             or age >= refresh
         )
 
@@ -881,15 +893,22 @@ class PopularQueueManager:
             flush=True,
         )
 
-        if pending_before == 0:
+        empty_sources = [
+            source
+            for source, _ in SOURCES
+            if self._pending_count(source) == 0
+        ]
+        if empty_sources:
             try:
-                quick = await self.quick_discover()
+                quick = await self.quick_discover(empty_sources)
                 print(
                     "IRIS_POPULAR_QUICK_READY "
                     + json.dumps(
                         {
+                            "sources": empty_sources,
                             "report": quick,
                             "pending": self._pending_count(),
+                            "status": self.status(),
                         },
                         ensure_ascii=False,
                     ),
