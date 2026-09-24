@@ -70,6 +70,7 @@ class Settings:
     popular_queue_gap_seconds: float = float(os.getenv("IRIS_POPULAR_QUEUE_GAP_SECONDS", "4"))
     popular_queue_idle_seconds: int = int(os.getenv("IRIS_POPULAR_QUEUE_IDLE_SECONDS", "120"))
     popular_queue_discovery_limit: int = int(os.getenv("IRIS_POPULAR_QUEUE_DISCOVERY_LIMIT", "120"))
+    popular_queue_max_pages: int = int(os.getenv("IRIS_POPULAR_QUEUE_MAX_PAGES", "5000"))
     queue_recovery_nonce: str | None = os.getenv("IRIS_QUEUE_RECOVERY_NONCE")
     one_shot_url: str | None = os.getenv("IRIS_ONE_SHOT_URL")
     one_shot_nonce: str | None = os.getenv("IRIS_ONE_SHOT_NONCE")
