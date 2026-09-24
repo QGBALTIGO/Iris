@@ -73,3 +73,87 @@ def test_queue_retries_non_video_relay_and_marks_video_sent(tmp_path: Path):
     assert row["status"] == "sent"
     assert row["sent_message_id"] == 123
     assert row["sent_at"] is not None
+
+
+def test_queue_rejects_taxonomy_and_archive_urls(tmp_path: Path):
+    manager = SiteQueueManager(tmp_path / "queue.sqlite3")
+
+    assert manager._is_content_post_url(
+        "https://pornocomlegenda.blog/um-post-real/"
+    )
+    assert not manager._is_content_post_url(
+        "https://pornocomlegenda.blog/tag/sexo-com-patrao/"
+    )
+    assert not manager._is_content_post_url(
+        "https://pornocomlegenda.blog/category/legendados/"
+    )
+    assert not manager._is_content_post_url(
+        "https://pornocomlegenda.blog/author/admin/"
+    )
+    assert not manager._is_content_post_url(
+        "https://pornocomlegenda.blog/feed/"
+    )
+
+    assert manager._is_post_sitemap_url(
+        "https://pornocomlegenda.blog/wp-sitemap-posts-post-1.xml"
+    )
+    assert manager._is_post_sitemap_url(
+        "https://pornocomlegenda.blog/post-sitemap.xml"
+    )
+    assert not manager._is_post_sitemap_url(
+        "https://pornocomlegenda.blog/wp-sitemap-taxonomies-post_tag-1.xml"
+    )
+
+
+def test_queue_prunes_invalid_pending_entries_but_preserves_sent(tmp_path: Path):
+    manager = SiteQueueManager(tmp_path / "queue.sqlite3")
+    now = time.time()
+
+    with manager._connect() as db:
+        for url, status in (
+            ("https://pornocomlegenda.blog/post-valido/", "pending"),
+            ("https://pornocomlegenda.blog/tag/invalida/", "pending"),
+            ("https://pornocomlegenda.blog/category/invalida/", "failed"),
+            ("https://pornocomlegenda.blog/tag/ja-enviada/", "sent"),
+        ):
+            db.execute(
+                """
+                INSERT INTO queue_items(
+                    site, post_id, url, title, published_at, status,
+                    attempts, created_at, updated_at
+                )
+                VALUES(?, ?, ?, ?, ?, ?, 0, ?, ?)
+                """,
+                (
+                    "https://pornocomlegenda.blog",
+                    url,
+                    url,
+                    "Teste",
+                    "2026-09-24T00:00:00",
+                    status,
+                    now,
+                    now,
+                ),
+            )
+        db.commit()
+
+    assert manager.prune_invalid_entries() == 2
+
+    with manager._connect() as db:
+        rows = db.execute(
+            "SELECT url, status FROM queue_items ORDER BY url"
+        ).fetchall()
+
+    kept = {(row["url"], row["status"]) for row in rows}
+    assert (
+        "https://pornocomlegenda.blog/post-valido/",
+        "pending",
+    ) in kept
+    assert (
+        "https://pornocomlegenda.blog/tag/ja-enviada/",
+        "sent",
+    ) in kept
+    assert all(
+        "/tag/invalida/" not in url and "/category/invalida/" not in url
+        for url, _ in kept
+    )
