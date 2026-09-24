@@ -11,9 +11,10 @@ def test_mtproto_connection_scaling():
     mib = 1024 * 1024
     assert connection_count(1 * mib) == 2
     assert connection_count(4 * mib) == 4
-    assert connection_count(24 * mib) == 6
-    assert connection_count(96 * mib) == 8
-    assert connection_count(248 * mib) == 8
+    assert connection_count(24 * mib) == 8
+    assert connection_count(96 * mib) == 10
+    assert connection_count(248 * mib) == 10
+    assert connection_count(300 * mib) == 12
 
 
 @pytest.mark.asyncio
