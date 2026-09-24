@@ -278,19 +278,27 @@ class PopularQueueManager:
             attempts=int(row["attempts"]) + 1,
         )
 
-    def _mark_failed(self, item: PopularItem, exc: Exception) -> None:
+    def _mark_retry_or_failed(self, item: PopularItem, exc: Exception) -> str:
+        max_attempts = max(1, int(settings.queue_max_attempts))
+        status = "pending" if item.attempts < max_attempts else "failed"
         with self._connect() as db:
             db.execute(
                 """
                 UPDATE popular_items
-                SET status='failed',
+                SET status=?,
                     last_error=?,
                     updated_at=?
                 WHERE id=?
                 """,
-                (f"{type(exc).__name__}: {str(exc)[:450]}", time.time(), item.id),
+                (
+                    status,
+                    f"{type(exc).__name__}: {str(exc)[:450]}",
+                    time.time(),
+                    item.id,
+                ),
             )
             db.commit()
+        return status
 
     def _mark_duplicate(
         self,
@@ -630,7 +638,10 @@ class PopularQueueManager:
                         continue
 
                 try:
-                    sent = await self._process_item(item)
+                    sent = await asyncio.wait_for(
+                        self._process_item(item),
+                        timeout=max(60.0, settings.queue_item_timeout_seconds),
+                    )
                 except asyncio.CancelledError:
                     with self._connect() as db:
                         db.execute(
@@ -646,16 +657,20 @@ class PopularQueueManager:
                         db.commit()
                     raise
                 except Exception as exc:
-                    self._mark_failed(item, exc)
+                    status = self._mark_retry_or_failed(item, exc)
                     failures_on_turn += 1
+                    self._set_next_source(self._other_source(item.source))
                     print(
-                        f"IRIS_POPULAR_FAILED source={item.source} "
-                        f"url={item.page_url} error={type(exc).__name__}:{str(exc)[:240]}",
+                        (
+                            "IRIS_POPULAR_RETRY"
+                            if status == "pending"
+                            else "IRIS_POPULAR_FAILED"
+                        )
+                        + f" source={item.source} attempt={item.attempts}/"
+                        + f"{max(1, int(settings.queue_max_attempts))} "
+                        + f"url={item.page_url} error={type(exc).__name__}:{str(exc)[:240]}",
                         flush=True,
                     )
-                    if failures_on_turn >= 3:
-                        self._set_next_source(self._other_source(item.source))
-                        failures_on_turn = 0
                     await asyncio.sleep(2.0)
                     continue
 
