@@ -493,9 +493,10 @@ class SiteQueueManager:
             return cur.rowcount
 
     def _next_item(self) -> QueueItem | None:
+        max_attempts = max(1, int(settings.queue_max_attempts))
         with self._connect() as db:
             # A broken/expired source must never monopolize the 24/7 worker.
-            # After three attempts it is preserved as failed and the queue moves on.
+            # After the configured attempt limit it is preserved as failed.
             db.execute(
                 """
                 UPDATE queue_items
@@ -506,7 +507,7 @@ class SiteQueueManager:
                   AND status IN ('retry_local','pending')
                   AND attempts >= ?
                 """,
-                (time.time(), _SITE, max(1, int(settings.queue_max_attempts))),
+                (time.time(), _SITE, max_attempts),
             )
             db.commit()
             row = db.execute(
@@ -521,7 +522,7 @@ class SiteQueueManager:
                     id ASC
                 LIMIT 1
                 """,
-                (_SITE,),
+                (_SITE, max_attempts),
             ).fetchone()
             if not row:
                 return None
