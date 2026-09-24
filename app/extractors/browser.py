@@ -4,6 +4,7 @@ import asyncio
 from contextlib import suppress
 from pathlib import Path
 
+from app.browser_guard import browser_slot, is_browser_resource_error
 from app.classifier import classify_resource
 from app.editorial import extract_editorial_metadata
 from app.models import MediaResource, ResourceType
@@ -48,7 +49,7 @@ async def probe_browser(
     found: list[MediaResource] = []
     lock = asyncio.Lock()
 
-    async with async_playwright() as p:
+    async with browser_slot("probe_browser"), async_playwright() as p:
         launch_args: list[str] = []
         if disable_gpu:
             launch_args.extend([
@@ -60,7 +61,9 @@ async def probe_browser(
             ])
         try:
             browser = await p.chromium.launch(headless=True, args=launch_args)
-        except Exception:
+        except Exception as exc:
+            if is_browser_resource_error(exc):
+                raise
             executable = Path(p.chromium.executable_path)
             if not executable.exists():
                 raise
