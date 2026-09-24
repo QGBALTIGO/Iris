@@ -157,3 +157,38 @@ def test_queue_prunes_invalid_pending_entries_but_preserves_sent(tmp_path: Path)
         "/tag/invalida/" not in url and "/category/invalida/" not in url
         for url, _ in kept
     )
+
+
+def test_recover_failed_resets_attempt_counter(tmp_path: Path):
+    manager = SiteQueueManager(tmp_path / "queue.sqlite3")
+    now = time.time()
+    with manager._connect() as db:
+        db.execute(
+            """
+            INSERT INTO queue_items(
+                site, post_id, url, title, published_at, status,
+                attempts, created_at, updated_at
+            )
+            VALUES(?, ?, ?, ?, ?, 'failed', 3, ?, ?)
+            """,
+            (
+                "https://pornocomlegenda.blog",
+                "recover-1",
+                "https://pornocomlegenda.blog/post-recuperavel/",
+                "Recuperável",
+                "2026-09-24T00:00:00",
+                now,
+                now,
+            ),
+        )
+        db.commit()
+
+    assert manager.recover_failed_once("nonce-test") == 1
+
+    with manager._connect() as db:
+        row = db.execute(
+            "SELECT status, attempts FROM queue_items WHERE post_id='recover-1'"
+        ).fetchone()
+
+    assert row["status"] == "pending"
+    assert row["attempts"] == 0
