@@ -645,10 +645,31 @@ class PopularQueueManager:
         if source == "xvideosputaria":
             if not storage_state:
                 try:
-                    await self.discover_source(source)
-                except Exception:
-                    pass
-                storage_state = self._browser_states.get(source)
+                    _, storage_state = await _discover_related(
+                        _SOURCE_URL[source],
+                        limit=1,
+                        max_listing_pages=1,
+                    )
+                    if storage_state:
+                        self._browser_states[source] = storage_state
+                    print(
+                        "IRIS_POPULAR_SESSION_BOOTSTRAP "
+                        + json.dumps(
+                            {
+                                "source": source,
+                                "ready": bool(storage_state),
+                            },
+                            ensure_ascii=False,
+                        ),
+                        flush=True,
+                    )
+                except Exception as exc:
+                    print(
+                        f"IRIS_POPULAR_SESSION_BOOTSTRAP_ERROR source={source} "
+                        f"error={type(exc).__name__}:{str(exc)[:220]}",
+                        flush=True,
+                    )
+                    storage_state = None
 
             browser_resources = await probe_browser(
                 page_url,
@@ -896,6 +917,20 @@ class PopularQueueManager:
                         continue
 
                 try:
+                    print(
+                        "IRIS_POPULAR_PROCESS "
+                        + json.dumps(
+                            {
+                                "id": item.id,
+                                "source": item.source,
+                                "rank": item.rank,
+                                "attempt": item.attempts,
+                                "url": item.page_url,
+                            },
+                            ensure_ascii=False,
+                        ),
+                        flush=True,
+                    )
                     sent = await asyncio.wait_for(
                         self._process_item(item),
                         timeout=max(60.0, settings.queue_item_timeout_seconds),
