@@ -125,6 +125,123 @@ class SiteQueueManager:
         value = html_lib.unescape(_TAG_RE.sub("", value)).strip()
         return value or None
 
+    @staticmethod
+    def _is_content_post_url(url: str, site: str = _SITE) -> bool:
+        try:
+            parsed = urlsplit(url)
+            site_parsed = urlsplit(site)
+        except Exception:
+            return False
+        if parsed.scheme not in {"http", "https"}:
+            return False
+        if parsed.netloc.lower() != site_parsed.netloc.lower():
+            return False
+
+        segments = [part.lower() for part in parsed.path.split("/") if part]
+        if not segments:
+            return False
+
+        blocked_roots = {
+            "tag",
+            "category",
+            "author",
+            "page",
+            "feed",
+            "search",
+            "wp-json",
+            "wp-admin",
+            "wp-content",
+            "wp-includes",
+            "comments",
+            "attachment",
+            "archives",
+        }
+        if segments[0] in blocked_roots:
+            return False
+
+        blocked_slugs = {
+            "contato",
+            "contact",
+            "dmca",
+            "privacy-policy",
+            "politica-de-privacidade",
+            "termos",
+            "terms",
+            "sobre",
+            "about",
+        }
+        if len(segments) == 1 and segments[0] in blocked_slugs:
+            return False
+        return True
+
+    @staticmethod
+    def _is_post_sitemap_url(url: str) -> bool:
+        name = urlsplit(url).path.rsplit("/", 1)[-1].lower()
+        if any(
+            marker in name
+            for marker in (
+                "post_tag",
+                "post-tag",
+                "taxonomy",
+                "taxonomies",
+                "category",
+                "author",
+                "page-sitemap",
+                "attachment",
+            )
+        ):
+            return False
+        return (
+            "posts-post" in name
+            or name.startswith("post-sitemap")
+            or name.startswith("posts-sitemap")
+        )
+
+    def prune_invalid_entries(self, site: str = _SITE) -> int:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                SELECT id, url
+                FROM queue_items
+                WHERE site=? AND status != 'sent'
+                """,
+                (site,),
+            ).fetchall()
+            invalid_ids = [
+                int(row["id"])
+                for row in rows
+                if not self._is_content_post_url(str(row["url"]), site)
+            ]
+            if not invalid_ids:
+                return 0
+
+            for start in range(0, len(invalid_ids), 300):
+                batch = invalid_ids[start:start + 300]
+                placeholders = ",".join("?" for _ in batch)
+                db.execute(
+                    f"DELETE FROM queue_items WHERE id IN ({placeholders})",
+                    batch,
+                )
+
+            total = db.execute(
+                "SELECT COUNT(*) FROM queue_items WHERE site=?",
+                (site,),
+            ).fetchone()[0]
+            db.execute(
+                """
+                UPDATE queue_state
+                SET discovered_total=?, updated_at=?
+                WHERE site=?
+                """,
+                (total, time.time(), site),
+            )
+            db.commit()
+        print(
+            f"IRIS_QUEUE_PRUNE invalid={len(invalid_ids)} remaining={total}",
+            flush=True,
+        )
+        return len(invalid_ids)
+
     async def discover(self, site: str = _SITE) -> dict[str, int]:
         wordpress_rows: list[tuple[str, str, str | None, str | None]] = []
         sitemap_rows: list[tuple[str, str, str | None, str | None]] = []
@@ -157,7 +274,7 @@ class SiteQueueManager:
             row
             for row in merged.values()
             if row[1].rstrip("/") != site_root
-            and urlsplit(row[1]).netloc.lower() == urlsplit(site).netloc.lower()
+            and self._is_content_post_url(row[1], site)
         ]
 
         if not rows:
@@ -295,7 +412,7 @@ class SiteQueueManager:
                     ]
                     sitemap_urls.extend(
                         loc for loc in locs
-                        if any(key in loc.lower() for key in ("post", "posts"))
+                        if self._is_post_sitemap_url(loc)
                     )
                     if sitemap_urls:
                         break
@@ -322,7 +439,7 @@ class SiteQueueManager:
                             entries.append(current)
                     for entry in entries:
                         url = entry["loc"]
-                        if url in seen:
+                        if url in seen or not self._is_content_post_url(url, site):
                             continue
                         seen.add(url)
                         out.append((url, url, None, entry.get("lastmod")))
@@ -646,6 +763,7 @@ class SiteQueueManager:
         return "pending"
 
     async def start(self, bot, target_chat_id: int, *, discover: bool = False) -> None:
+        self.prune_invalid_entries()
         if discover:
             await self.discover()
         self.reset_stale(0)
