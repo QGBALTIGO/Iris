@@ -1826,7 +1826,11 @@ async def run_bot() -> None:
         await asyncio.sleep(interval)
         while True:
             try:
-                if userbot.configured and not await userbot.is_authorized():
+                if (
+                    userbot.configured
+                    and not userbot.busy
+                    and not await userbot.is_authorized()
+                ):
                     try:
                         await userbot.reconnect()
                     except Exception as exc:
