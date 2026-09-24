@@ -109,9 +109,14 @@ class UserbotManager:
         attempts = max(1, int(self.config.mtproto_send_attempts))
         try:
             for attempt in range(1, attempts + 1):
+                retry_cap = (
+                    None
+                    if attempt == 1
+                    else max(2, int(self.config.mtproto_retry_connection_cap))
+                )
                 try:
                     return await asyncio.wait_for(
-                        operation(),
+                        operation(retry_cap),
                         timeout=max(30.0, self.config.mtproto_upload_timeout_seconds),
                     )
                 except asyncio.CancelledError:
@@ -121,6 +126,7 @@ class UserbotManager:
                         raise
                     print(
                         f"IRIS_MTPROTO_RETRY label={label} attempt={attempt} "
+                        f"next_connections={max(2, int(self.config.mtproto_retry_connection_cap))} "
                         f"error={type(exc).__name__}:{str(exc)[:220]}",
                         flush=True,
                     )
@@ -270,6 +276,7 @@ class UserbotManager:
         as_video: bool = False,
         progress_callback=None,
         parse_mode=None,
+        connection_override: int | None = None,
     ):
         client = await self.client()
         if not await client.is_user_authorized():
@@ -304,7 +311,12 @@ class UserbotManager:
                 ]
                 mime_type = "video/mp4"
 
-            payload = await upload_path(client, upload_path_value, progress_callback=progress_callback)
+            payload = await upload_path(
+                client,
+                upload_path_value,
+                progress_callback=progress_callback,
+                connection_override=connection_override,
+            )
 
         try:
             return await client.send_file(
@@ -338,7 +350,7 @@ class UserbotManager:
         if not bot_username:
             raise RuntimeError("O bot não possui username público.")
 
-        async def operation():
+        async def operation(connection_override):
             target = bot_username if bot_username.startswith("@") else f"@{bot_username}"
             return await self._send_file_to_entity(
                 target,
@@ -347,6 +359,7 @@ class UserbotManager:
                 as_video=as_video,
                 progress_callback=progress_callback,
                 parse_mode=parse_mode,
+                connection_override=connection_override,
             )
 
         return await self._run_send_with_watchdog(
@@ -364,7 +377,7 @@ class UserbotManager:
         progress_callback=None,
         parse_mode=None,
     ):
-        async def operation():
+        async def operation(connection_override):
             target = await self.resolve_delivery_target(invite_url)
             return await self._send_file_to_entity(
                 target,
@@ -373,6 +386,7 @@ class UserbotManager:
                 as_video=as_video,
                 progress_callback=progress_callback,
                 parse_mode=parse_mode,
+                connection_override=connection_override,
             )
 
         return await self._run_send_with_watchdog(
