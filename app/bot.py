@@ -1732,6 +1732,23 @@ async def run_bot() -> None:
         asyncio.create_task(_channel_backfill_once(), name="iris-channel-backfill")
 
     try:
+        pruned_invalid = site_queue.prune_invalid_entries()
+        if pruned_invalid:
+            try:
+                stats = await site_queue.discover()
+                print(
+                    "IRIS_QUEUE_REDISCOVER "
+                    f"pruned={pruned_invalid} found={stats['found']} "
+                    f"added={stats['added']} total={stats['total']}",
+                    flush=True,
+                )
+            except Exception as exc:
+                print(
+                    "IRIS_QUEUE_REDISCOVER_ERROR "
+                    f"{type(exc).__name__}: {str(exc)[:300]}",
+                    flush=True,
+                )
+
         queue_state = site_queue.status()
         print("IRIS_QUEUE_STATE " + site_queue.summary_for_logs(), flush=True)
 
