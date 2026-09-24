@@ -26,8 +26,8 @@ from app.video_candidates import download_first_valid_video
 
 
 SOURCES = (
-    ("tubepussy", "https://tubepussy.org/most-popular/"),
-    ("xvideosputaria", "https://xvideosputaria.com/mais-populares/#forward"),
+    ("tubepussy", "https://tubepussy.org/"),
+    ("xvideosputaria", "https://xvideosputaria.com/"),
 )
 _SOURCE_URL = dict(SOURCES)
 
@@ -43,7 +43,7 @@ class PopularItem:
 
 
 class PopularQueueManager:
-    """Persistent round-robin queue for the two popular-video pages."""
+    """Persistent round-robin queue for the complete paginated catalogs."""
 
     def __init__(self, db_path: Path | None = None):
         base = Path("/data") if Path("/data").exists() else settings.downloads_dir
@@ -169,11 +169,19 @@ class PopularQueueManager:
 
     def _persist_candidates(self, source: str, candidates: list[str]) -> dict[str, int]:
         listing = _canonical(_SOURCE_URL[source])
+        known_listing_pages = {
+            listing,
+            "https://tubepussy.org/most-popular/",
+            "https://tubepussy.org/latest-updates/",
+            "https://tubepussy.org/top-rated/",
+            "https://xvideosputaria.com/mais-populares/",
+            "https://xvideosputaria.com/porno-novo-hdd/",
+        }
         clean: list[str] = []
         seen: set[str] = set()
         for value in candidates:
             url = _canonical(value)
-            if not url or url == listing or url in seen:
+            if not url or url in known_listing_pages or url in seen:
                 continue
             seen.add(url)
             clean.append(url)
@@ -218,14 +226,23 @@ class PopularQueueManager:
             raise ValueError(f"Fonte desconhecida: {source}")
         candidates, storage_state = await _discover_related(
             _SOURCE_URL[source],
-            limit=max(80, int(settings.popular_queue_discovery_limit)),
+            limit=None,
+            max_listing_pages=max(50, int(settings.popular_queue_max_pages)),
         )
         if storage_state:
             self._browser_states[source] = storage_state
         result = self._persist_candidates(source, candidates)
         print(
-            "IRIS_POPULAR_DISCOVER "
-            + json.dumps({"source": source, **result}, ensure_ascii=False),
+            "IRIS_CATALOG_DISCOVER "
+            + json.dumps(
+                {
+                    "source": source,
+                    "seed": _SOURCE_URL[source],
+                    "max_pages": max(50, int(settings.popular_queue_max_pages)),
+                    **result,
+                },
+                ensure_ascii=False,
+            ),
             flush=True,
         )
         return result
